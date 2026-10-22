@@ -1,0 +1,15 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+.jwt_secret
+/pbs_house_loan.db*
+/database/pbs_house_loan.db*
+/uploads/
+/scratch/
+/scripts/seed_other_pbs.js
+/PBS_House_Loan_System.exe
