@@ -1,0 +1,2573 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>পবিস কর্মকর্তা-কর্মচারী গৃহ ঋণ ব্যবস্থাপনা সিস্টেম</title>
+  <!-- Offline-First Local Vendor Libraries -->
+  <script src="/js/vendor/tailwindcss.js"></script>
+  <script src="/js/vendor/lucide.min.js"></script>
+  <script src="/js/vendor/chart.umd.min.js"></script>
+  <script src="/js/vendor/sweetalert2.all.min.js"></script>
+  <link rel="stylesheet" href="/css/style.css?v=2.3.38">
+  <link rel="manifest" href="/manifest.json">
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col font-sans text-gray-800">
+
+  <!-- TOP HEADER / NAVBAR -->
+  <header id="topNavbar" class="bg-emerald-800 text-white shadow-md sticky top-0 z-40">
+    <div class="w-full px-4 flex items-center justify-between h-14">
+      
+      <!-- Sidebar Toggle Button -->
+      <button id="sidebarToggleBtn" onclick="toggleSidebar()" class="mr-3 p-2 rounded-lg hover:bg-emerald-700 transition focus:outline-none" title="সাইডবার লুকান/দেখান">
+        <i data-lucide="panel-left" class="w-5 h-5"></i>
+      </button>
+
+      <!-- Logo & PBS Title -->
+      <div class="flex items-center space-x-3 shrink-0">
+        <div class="bg-white p-1.5 rounded-full text-emerald-800 shadow">
+          <i data-lucide="home" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h1 id="headerPbsName" class="text-base font-bold tracking-tight leading-tight">গাজীপুর পল্লী বিদ্যুৎ সমিতি-২</h1>
+          <p class="text-[11px] text-emerald-200 leading-tight">কর্মকর্তা-কর্মচারী গৃহ নির্মাণ ঋণ ব্যবস্থাপনা সফটওয়্যার</p>
+        </div>
+      </div>
+
+      <!-- Spotlight Global Quick Finder -->
+      <div id="spotlightSearchWrapper" class="hidden md:flex items-center flex-1 max-w-sm mx-4 relative">
+        <div class="relative w-full">
+          <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-emerald-300 pointer-events-none">
+            <i data-lucide="search" class="w-4 h-4"></i>
+          </span>
+          <input type="text" id="globalSpotlightInput" oninput="handleGlobalSpotlightSearch(this.value)" onfocus="handleGlobalSpotlightSearch(this.value)" placeholder="দ্রুত অনুসন্ধান: পে আইডি, নাম বা লোন নং..." class="w-full pl-9 pr-14 py-1.5 bg-emerald-900/60 hover:bg-emerald-900/80 focus:bg-white text-white focus:text-gray-900 placeholder-emerald-200/60 focus:placeholder-gray-400 rounded-lg text-xs transition border border-emerald-700/50 focus:border-white focus:ring-2 focus:ring-emerald-400">
+          <span class="absolute inset-y-0 right-0 pr-2 flex items-center text-[10px] text-emerald-300 font-mono pointer-events-none bg-emerald-800/40 px-1.5 my-1 mr-1 rounded border border-emerald-600/40">Ctrl+K</span>
+        </div>
+        <!-- Spotlight Results Dropdown Panel -->
+        <div id="spotlightDropdown" class="hidden absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-2xl border border-gray-200 text-gray-800 overflow-hidden z-50 max-h-96 overflow-y-auto">
+          <!-- Populated dynamically via JS -->
+        </div>
+      </div>
+
+      <!-- Right: Status Badges + Fullscreen + User -->
+      <div class="flex items-center space-x-2">
+        <!-- Online/Offline Badge -->
+        <span id="connectionBadge" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+          <span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+          নেটৱৰ্ক সংযুক্ত
+        </span>
+
+        <!-- User Info & Logout (Hidden when logged out) -->
+        <div id="userHeaderSection" class="hidden items-center space-x-2">
+          <div class="text-right hidden md:block">
+            <div id="userFullName" class="text-sm font-semibold text-white leading-tight">ব্যবহারকারী</div>
+            <div id="userRoleBadge" class="text-[11px] text-emerald-200 leading-tight">হিসাব শাখা</div>
+          </div>
+          <button onclick="openChangePasswordModal()" class="p-2 rounded-lg hover:bg-emerald-700 transition focus:outline-none" title="পাসওয়ার্ড পরিবর্তন">
+            <i data-lucide="key" class="w-4 h-4"></i>
+          </button>
+          <!-- Fullscreen Toggle Button -->
+          <button id="fullscreenBtn" onclick="toggleFullscreen()" class="p-2 rounded-lg hover:bg-emerald-700 transition focus:outline-none" title="ফুলস্ক্রিন">
+            <i data-lucide="maximize" class="w-4 h-4" id="fullscreenIcon"></i>
+          </button>
+          <button id="logoutBtn" class="bg-emerald-900 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md text-sm font-medium transition flex items-center space-x-1 shadow">
+            <i data-lucide="log-out" class="w-4 h-4"></i>
+            <span class="hidden sm:inline">লগআউট</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- MAIN APP CONTAINER -->
+  <div id="appContainer" class="flex-1 flex w-full px-3 py-3 gap-3" style="min-height: calc(100vh - 3.5rem)">
+
+    <!-- LOGIN SCREEN (Shown when not authenticated) -->
+    <div id="loginScreen" class="w-full max-w-md mx-auto my-auto py-10">
+      <div class="bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
+        <div class="text-center mb-6">
+          <div class="inline-flex p-3 bg-emerald-100 text-emerald-800 rounded-full mb-3 shadow-inner">
+            <i data-lucide="shield-check" class="w-8 h-8"></i>
+          </div>
+          <h2 class="text-2xl font-bold text-gray-800">সিস্টেম লগইন</h2>
+          <p class="text-sm text-gray-500 mt-1">পবিস গৃহ ঋণ ব্যবস্থাপনা ও সেলফ-সার্ভিস পোর্টাল</p>
+        </div>
+
+        <form id="loginForm" onsubmit="event.preventDefault(); handleLoginSubmit();" class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">ইউজারনেম / কর্মচারীর ৪ সংখ্যার পে আইডি</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                <i data-lucide="user" class="w-5 h-5"></i>
+              </span>
+              <input type="text" id="loginUsername" required class="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm" placeholder="যেমন: accounts বা 0112">
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">পাসওয়ার্ড</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                <i data-lucide="lock" class="w-5 h-5"></i>
+              </span>
+              <input type="password" id="loginPassword" required class="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm" placeholder="••••••••">
+            </div>
+          </div>
+
+          <div id="loginError" class="hidden p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg"></div>
+
+          <button type="submit" class="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-medium py-2.5 rounded-lg shadow transition flex items-center justify-center space-x-2">
+            <i data-lucide="log-in" class="w-4 h-4"></i>
+            <span>লগইন করুন</span>
+          </button>
+        </form>
+
+        <!-- Quick Demo Login Access Buttons -->
+        <div class="mt-8 pt-6 border-t border-gray-200">
+          <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider text-center mb-3">দ্রুত ডেমো লগইন বাটন</p>
+          <div class="grid grid-cols-3 gap-2">
+            <button onclick="quickLogin('accounts', 'accounts123')" class="px-2 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-medium text-center transition">
+              <div class="font-bold">হিসাব শাখা</div>
+              <div class="text-[10px] text-emerald-600">Accounts</div>
+            </button>
+            <button onclick="quickLogin('admin', 'admin123')" class="px-2 py-2 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg text-xs font-medium text-center transition">
+              <div class="font-bold">অ্যাডমিন</div>
+              <div class="text-[10px] text-blue-600">Full Control</div>
+            </button>
+            <button onclick="quickLogin('0112', 'password123')" class="px-2 py-2 bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 rounded-lg text-xs font-medium text-center transition">
+              <div class="font-bold">পে আইডি: 0112</div>
+              <div class="text-[10px] text-purple-600">কর্মচারী সেলফ-সার্ভিস</div>
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- AUTHENTICATED WORKSPACE (Hidden when logged out) -->
+    <div id="authenticatedWorkspace" class="hidden w-full flex gap-3">
+
+      <!-- SIDEBAR NAVIGATION -->
+      <aside id="sidebar" class="sidebar-open bg-white rounded-2xl shadow-sm border border-gray-200 p-3 shrink-0 flex flex-col transition-all duration-300" style="width:250px">
+        <div id="sidebarNavScroll" class="flex-1 min-h-0 overflow-y-auto pr-1">
+          <!-- Sidebar Header with close button -->
+          <div class="sidebar-heading flex items-center justify-between px-2 py-2 mb-2">
+            <div>
+              <span class="block text-[10px] font-bold text-emerald-800 uppercase tracking-[0.16em]">কর্মপরিসর</span>
+              <span class="block text-sm font-bold text-gray-800 mt-0.5">প্রধান মেনু</span>
+            </div>
+            <button onclick="toggleSidebar()" class="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition" title="সাইডবার বন্ধ করুন" aria-label="সাইডবার বন্ধ করুন">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+          
+          <!-- ADMIN & ACCOUNTS TABS -->
+          <div id="adminNavTabs" class="sidebar-nav-group space-y-1">
+            <div class="sidebar-section-label">মূল তথ্য</div>
+            <button onclick="switchTab('dashboard')" class="nav-tab active w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="dashboard">
+              <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+              <span>ড্যাশবোর্ড</span>
+            </button>
+            <button onclick="switchTab('employees')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="employees">
+              <i data-lucide="users" class="w-4 h-4"></i>
+              <span>কর্মকর্তা/কর্মচারী</span>
+            </button>
+            <button onclick="switchTab('loans')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="loans">
+              <i data-lucide="file-text" class="w-4 h-4"></i>
+              <span>গৃহ ঋণ তালিকা</span>
+            </button>
+            <div class="sidebar-section-label">মাসিক আদায় ও রেমিট্যান্স</div>
+            <button onclick="switchTab('deductions')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="deductions">
+              <i data-lucide="credit-card" class="w-4 h-4"></i>
+              <span>মাসিক কিস্তি কর্তন</span>
+            </button>
+            <button onclick="switchTab('remittances')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="remittances">
+              <i data-lucide="send" class="w-4 h-4"></i>
+              <span>অন্য পবিস রেমিট্যান্স</span>
+            </button>
+            <button onclick="switchTab('transferred_loans')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="transferred_loans">
+              <i data-lucide="file-warning" class="w-4 h-4 text-amber-600"></i>
+              <span>বদলিকৃত ঋণ ও তাগাদা পত্র</span>
+            </button>
+            <button onclick="switchTab('provisions')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="provisions">
+              <i data-lucide="percent" class="w-4 h-4"></i>
+              <span>সুদ প্রভিশন (৮% / ৭%)</span>
+            </button>
+            <button onclick="switchTab('bank_advices')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="bank_advices">
+              <i data-lucide="file-check-2" class="w-4 h-4"></i>
+              <span>প্রস্তুতকৃত ব্যাংক অ্যাডভাইস</span>
+            </button>
+            <div class="sidebar-section-label">হিসাব ও প্রতিবেদন</div>
+            <button onclick="switchTab('ledgers')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="ledgers">
+              <i data-lucide="book-open" class="w-4 h-4"></i>
+              <span>খতিয়ান (ঋণ Ledger)</span>
+            </button>
+            <button onclick="switchTab('emp_loan_ledger')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="emp_loan_ledger">
+              <i data-lucide="user-cog" class="w-4 h-4"></i>
+              <span>কর্মচারীভিত্তিক খতিয়ান</span>
+            </button>
+            <button onclick="switchTab('comparative')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="comparative">
+              <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
+              <span>অর্থবছর তুলনামূলক</span>
+            </button>
+            <div class="sidebar-section-label">সিস্টেম</div>
+            <button onclick="switchTab('audit')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="audit">
+              <i data-lucide="activity" class="w-4 h-4"></i>
+              <span>অডিট লগ রিপোর্ট</span>
+            </button>
+            <button onclick="switchTab('recyclebin')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="recyclebin">
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+              <span>রিসাইকেল বিন (রিস্টোর)</span>
+            </button>
+            <button onclick="switchTab('settings')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="settings">
+              <i data-lucide="settings" class="w-4 h-4"></i>
+              <span>পবিস সেটিংস</span>
+            </button>
+          </div>
+
+          <!-- EMPLOYEE SELF-SERVICE TABS -->
+          <div id="employeeNavTabs" class="sidebar-nav-group hidden space-y-1">
+            <div class="sidebar-section-label">আমার হিসাব</div>
+            <button onclick="switchTab('emp_portal')" class="nav-tab active w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="emp_portal">
+              <i data-lucide="user-check" class="w-4 h-4"></i>
+              <span>আমার ঋণ সারসংক্ষেপ</span>
+            </button>
+            <button onclick="switchTab('emp_ledger')" class="nav-tab w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 transition" data-tab="emp_ledger">
+              <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+              <span>আমার কিস্তি হিস্ট্রি</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Offline Status & App Info -->
+        <div class="sidebar-footer mt-3 pt-3 border-t border-gray-200 text-xs text-gray-600">
+          <div class="flex items-center space-x-2 text-emerald-900 font-semibold mb-1">
+            <span class="sidebar-status-dot"></span>
+            <span>লোকাল ডাটাবেজ সক্রিয়</span>
+          </div>
+          <p class="text-[11px] text-gray-600 pl-4">ফাইল: database\pbs_house_loan.db</p>
+        </div>
+      </aside>
+
+      <!-- TAB CONTENT AREA -->
+      <main id="mainContent" class="flex-1 space-y-6">
+
+        <!-- 1. DASHBOARD TAB -->
+        <section id="tab-dashboard" class="tab-pane space-y-6">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">ড্যাশবোর্ড সারসংক্ষেপ</h2>
+              <p class="text-sm text-gray-500">কর্মকর্তা-কর্মচারীদের গৃহ নির্মাণ ঋণ ও কিস্তি আদায় পরিস্থিতি</p>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button onclick="openNewLoanModal()" class="bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 rounded-lg text-sm font-medium flex items-center space-x-1.5 shadow transition">
+                <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                <span>নতুন গৃহ ঋণ বরাদ্দ</span>
+              </button>
+              <button onclick="openBatchDeductionModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg text-sm font-medium flex items-center space-x-1.5 shadow transition">
+                <i data-lucide="layers" class="w-4 h-4"></i>
+                <span>মাসিক বেতন কর্তন রান</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- GUIDED MONTHLY WORKFLOW HUB -->
+          <div id="monthlyWorkflowHub" class="bg-gradient-to-r from-emerald-900 via-emerald-800 to-teal-900 text-white rounded-2xl p-5 shadow-lg border border-emerald-700/50 relative overflow-hidden">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-emerald-700/60 pb-3 mb-4">
+              <div class="flex items-center space-x-3">
+                <div class="p-2.5 bg-white/10 rounded-xl backdrop-blur-sm">
+                  <i data-lucide="calendar-check" class="w-6 h-6 text-emerald-300"></i>
+                </div>
+                <div>
+                  <h3 class="font-bold text-lg text-white flex items-center space-x-2">
+                    <span>মাসিক রুটিন কার্যক্রম সহায়ক (Monthly Action Hub)</span>
+                    <span id="hubMonthBadge" class="text-xs bg-emerald-700/80 text-emerald-200 px-2.5 py-0.5 rounded-full font-mono">অক্টোবর ২০২৬</span>
+                  </h3>
+                  <p class="text-xs text-emerald-200/90">চলতি মাসের বেতন কিস্তি কর্তন, রেমিট্যান্স এডভাইস ও সুদ প্রভিশন ট্র্যাকার</p>
+                </div>
+              </div>
+              <div class="flex items-center space-x-2">
+                <button onclick="loadDashboard()" class="p-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs text-emerald-100 transition flex items-center space-x-1" title="রিফ্রেশ করুন">
+                  <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                  <span class="text-[11px] font-medium hidden sm:inline">রিফ্রেশ</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <!-- Step 1: Monthly Deduction -->
+              <div class="bg-white/10 backdrop-blur-sm rounded-xl p-3.5 border border-white/10 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-xs font-semibold text-emerald-200">১. বেতন কিস্তি কর্তন</span>
+                    <span id="hubDeductionBadge" class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">যাচাই হচ্ছে...</span>
+                  </div>
+                  <div id="hubDeductionText" class="text-xs text-white/90">চলতি মাসের কিস্তি তথ্য লোড হচ্ছে...</div>
+                </div>
+                <div class="pt-3 mt-2 border-t border-white/10 flex items-center justify-between">
+                  <button onclick="openBatchDeductionModal()" class="w-full py-1.5 px-3 bg-white text-emerald-900 hover:bg-emerald-50 rounded-lg text-xs font-bold transition flex items-center justify-center space-x-1.5 shadow">
+                    <i data-lucide="layers" class="w-3.5 h-3.5 text-blue-700"></i>
+                    <span>ব্যাচ কর্তন রান</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Step 2: Inter-PBS Remittance -->
+              <div class="bg-white/10 backdrop-blur-sm rounded-xl p-3.5 border border-white/10 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-xs font-semibold text-emerald-200">২. অন্য পবিস রেমিট্যান্স</span>
+                    <span id="hubRemittanceBadge" class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">যাচাই হচ্ছে...</span>
+                  </div>
+                  <div id="hubRemittanceText" class="text-xs text-white/90">রেমিট্যান্স তথ্য লোড হচ্ছে...</div>
+                </div>
+                <div class="pt-3 mt-2 border-t border-white/10 flex items-center justify-between">
+                  <button onclick="openAllPbsAdviceModal()" class="w-full py-1.5 px-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center space-x-1.5 shadow">
+                    <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+                    <span>এক ক্লিকে ব্যাংক অ্যাডভাইস</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Step 3: Interest Provision -->
+              <div class="bg-white/10 backdrop-blur-sm rounded-xl p-3.5 border border-white/10 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-xs font-semibold text-emerald-200">৩. মাসিক সুদ প্রভিশন</span>
+                    <span id="hubProvisionBadge" class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">যাচাই হচ্ছে...</span>
+                  </div>
+                  <div id="hubProvisionText" class="text-xs text-white/90">সুদ প্রভিশন তথ্য লোড হচ্ছে...</div>
+                </div>
+                <div class="pt-3 mt-2 border-t border-white/10 flex items-center justify-between">
+                  <button onclick="openRunProvisionModal()" class="w-full py-1.5 px-3 bg-amber-500 hover:bg-amber-600 text-gray-950 rounded-lg text-xs font-bold transition flex items-center justify-center space-x-1.5 shadow">
+                    <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+                    <span>সুদ প্রভিশন রান</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- KPI STATS CARDS -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- Total Disbursed -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+              <div>
+                <p class="text-xs font-medium text-gray-500 uppercase">মোট বিতরণকৃত ঋণ</p>
+                <h3 id="statTotalDisbursed" class="text-xl font-bold text-gray-900 mt-1">০</h3>
+                <p class="text-xs text-emerald-600 mt-1 flex items-center">
+                  <i data-lucide="check" class="w-3 h-3 mr-1"></i> মঞ্জুরিকৃত ঋণ
+                </p>
+              </div>
+              <div class="p-3 bg-emerald-50 text-emerald-700 rounded-xl">
+                <i data-lucide="wallet" class="w-6 h-6"></i>
+              </div>
+            </div>
+
+            <!-- Principal Outstanding Balance -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+              <div>
+                <p class="text-xs font-medium text-gray-500 uppercase">অবশিষ্ট আসল স্থিতি</p>
+                <h3 id="statPrincipalBalance" class="text-xl font-bold text-blue-900 mt-1">০</h3>
+                <p class="text-xs text-blue-600 mt-1">আসল আদায় সাপেক্ষ</p>
+              </div>
+              <div class="p-3 bg-blue-50 text-blue-700 rounded-xl">
+                <i data-lucide="piggy-bank" class="w-6 h-6"></i>
+              </div>
+            </div>
+
+            <!-- Accrued Interest Balance -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+              <div>
+                <p class="text-xs font-medium text-gray-500 uppercase">ধার্যকৃত সুদ স্থিতি</p>
+                <h3 id="statInterestBalance" class="text-xl font-bold text-amber-900 mt-1">০</h3>
+                <p class="text-xs text-amber-600 mt-1">৮% ও ৭% হারে ধার্যকৃত</p>
+              </div>
+              <div class="p-3 bg-amber-50 text-amber-700 rounded-xl">
+                <i data-lucide="calculator" class="w-6 h-6"></i>
+              </div>
+            </div>
+
+            <!-- Inter-PBS Pending Remittance -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+              <div>
+                <p class="text-xs font-medium text-gray-500 uppercase">অন্য পবিসে প্রেরণযোগ্য</p>
+                <h3 id="statPendingRemittance" class="text-xl font-bold text-purple-900 mt-1">০</h3>
+                <p class="text-xs text-purple-600 mt-1">অনিষ্পন্ন রেমিট্যান্স</p>
+              </div>
+              <div class="p-3 bg-purple-50 text-purple-700 rounded-xl">
+                <i data-lucide="arrow-up-right" class="w-6 h-6"></i>
+              </div>
+            </div>
+          </div>
+
+          <!-- COMPARATIVE CHART & RECENT ACTIVITY -->
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-2 bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="font-bold text-gray-800">অর্থবছর ভিত্তিক ঋণ বিতরণ ও আদায় চিত্র</h3>
+                <button onclick="switchTab('comparative')" class="text-xs text-emerald-700 hover:underline font-medium">বিস্তারিত বিবরণী &rarr;</button>
+              </div>
+              <div class="h-64">
+                <canvas id="dashboardChart"></canvas>
+              </div>
+            </div>
+
+            <!-- Quick Action Cards & Notices -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <h3 class="font-bold text-gray-800 border-b pb-2">জরুরী বিধি ও কার্যাবলী</h3>
+              
+              <div class="p-3 bg-emerald-50 rounded-lg border border-emerald-100 text-xs text-emerald-800 space-y-1">
+                <div class="font-bold flex items-center space-x-1">
+                  <i data-lucide="info" class="w-4 h-4 text-emerald-600"></i>
+                  <span>সুদ ধার্যের সরকারি নীতিমালা (ব্যালেন্সের উপর হিসাব):</span>
+                </div>
+                <p>&bull; ০১-০১-২০২০ এর পূর্বে (ডিসে/২০১৯ পর্যন্ত) অপরিশোধিত ব্যালেন্সে: <strong>৮% সরল সুদ</strong></p>
+                <p>&bull; ০১-০১-২০২০ হতে (জানু/২০২০ থেকে) একই ঋণের অপরিশোধিত ব্যালেন্সে: <strong>৭% সরল সুদ</strong></p>
+                <p>&bull; বিতরণ তারিখের সাথে হারের সম্পর্ক নেই (ব্যালেন্স ভিত্তিক সময়কালের হারে সুদ)</p>
+                <p>&bull; অন্য পবিস হতে গৃহীত ঋণ: <strong>সুদ প্রভিশন প্রযোজ্য নয়</strong></p>
+                <p>&bull; আদায় বিধি: <strong>আগে সম্পূর্ণ আসল, পরে সুদ</strong></p>
+              </div>
+
+              <div class="space-y-2 pt-2">
+                <button onclick="switchTab('provisions')" class="w-full text-left px-3 py-2.5 bg-gray-50 hover:bg-gray-100 rounded-lg text-xs font-medium text-gray-700 flex items-center justify-between">
+                  <span class="flex items-center space-x-2">
+                    <i data-lucide="sparkles" class="w-4 h-4 text-amber-600"></i>
+                    <span>মাসিক সুদ প্রভিশন রান করুন</span>
+                  </span>
+                  <i data-lucide="chevron-right" class="w-4 h-4 text-gray-400"></i>
+                </button>
+                <button onclick="switchTab('remittances')" class="w-full text-left px-3 py-2.5 bg-gray-50 hover:bg-gray-100 rounded-lg text-xs font-medium text-gray-700 flex items-center justify-between">
+                  <span class="flex items-center space-x-2">
+                    <i data-lucide="send" class="w-4 h-4 text-purple-600"></i>
+                    <span>অন্য পবিসের জন্য ব্যাংক অ্যাডভাইস প্রস্তুতকরণ</span>
+                  </span>
+                  <i data-lucide="chevron-right" class="w-4 h-4 text-gray-400"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. EMPLOYEES TAB -->
+        <section id="tab-employees" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">কর্মকর্তা ও কর্মচারী তালিকা</h2>
+              <p class="text-sm text-gray-500">গৃহ ঋণ গ্রহণকারী কর্মকর্তা-কর্মচারীদের বিবরণ ও লগইন অ্যাক্সেস</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <a href="/templates/employee_import_template.xlsx" download="employee_import_template.xlsx" class="border border-emerald-700 text-emerald-800 hover:bg-emerald-50 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5">
+                <i data-lucide="download" class="w-4 h-4"></i>
+                <span>Excel টেমপ্লেট</span>
+              </a>
+              <button type="button" onclick="document.getElementById('employeeExcelImportInput').click()" class="border border-blue-700 text-blue-800 hover:bg-blue-50 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5">
+                <i data-lucide="upload" class="w-4 h-4"></i>
+                <span>Excel আমদানি</span>
+              </button>
+              <input type="file" id="employeeExcelImportInput" accept=".xlsx" class="hidden">
+              <button onclick="openEmployeeModal()" class="bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 rounded-lg text-sm font-medium flex items-center space-x-1.5 shadow transition">
+                <i data-lucide="user-plus" class="w-4 h-4"></i>
+                <span>নতুন কর্মকর্তা/কর্মচারী নিবন্ধন</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Filter & Search -->
+          <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-wrap gap-4 items-center">
+            <div class="flex-1 min-w-[240px] relative">
+              <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-gray-400">
+                <i data-lucide="search" class="w-4 h-4"></i>
+              </span>
+              <input type="text" id="employeeSearchInput" oninput="loadEmployees()" placeholder="নাম, আইডি কোড বা মোবাইল দিয়ে খুঁজুন..." class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-emerald-500 focus:border-emerald-500">
+            </div>
+            <select id="employeeDeptFilter" onchange="loadEmployees()" class="border border-gray-300 rounded-lg py-2 px-3 text-sm focus:ring-emerald-500 focus:border-emerald-500">
+                <option value="">সকল বিভাগ</option>
+                <option value="প্রকৌশল বিভাগ">প্রকৌশল বিভাগ</option>
+                <option value="সদস্য সেবা বিভাগ">সদস্য সেবা বিভাগ</option>
+                <option value="অর্থ -রাজস্ব বিভাগ">অর্থ -রাজস্ব বিভাগ</option>
+                <option value="অর্থ ও হিসাব বিভাগ">অর্থ ও হিসাব বিভাগ</option>
+                <option value="কারিগরি বিভাগ">কারিগরি বিভাগ</option>
+                <option value="ওঅ্যান্ডএম বিভাগ">ওঅ্যান্ডএম বিভাগ</option>
+                <option value="জেনারেল/প্রশাসন">প্রশাসন</option>
+            </select>
+          </div>
+
+          <!-- Employees Table -->
+          <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-sm">
+                <thead>
+                  <tr class="table-header text-gray-600 font-semibold border-b">
+                    <th class="p-3.5">আইডি কোড</th>
+                    <th class="p-3.5">নাম ও পদবী</th>
+                    <th class="p-3.5">বিভাগ ও বর্তমান পদায়ন</th>
+                    <th class="p-3.5 text-center">সক্রিয় ঋণ সংখ্যা</th>
+                    <th class="p-3.5 text-right">অবশিষ্ট আসল</th>
+                    <th class="p-3.5 text-right">অবশিষ্ট সুদ</th>
+                    <th class="p-3.5 text-right">মাসিক কিস্তি</th>
+                    <th class="p-3.5 text-center">অ্যাকশন</th>
+                  </tr>
+                </thead>
+                <tbody id="employeesTableBody" class="divide-y divide-gray-100">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. LOANS TAB -->
+        <section id="tab-loans" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">গৃহ ঋণ তালিকা ও ব্যবস্থাপনা</h2>
+              <p class="text-sm text-gray-500">নিজস্ব পবিস ও অন্যান্য পবিস হতে গৃহীত ঋণের হিসাব বিবরণী</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <a href="/templates/loan_opening_balance_import_template.xlsx" download="loan_opening_balance_import_template.xlsx" class="border border-emerald-700 text-emerald-800 hover:bg-emerald-50 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5">
+                <i data-lucide="download" class="w-4 h-4"></i>
+                <span>Opening balance টেমপ্লেট</span>
+              </a>
+              <button type="button" onclick="document.getElementById('loanExcelImportInput').click()" class="border border-blue-700 text-blue-800 hover:bg-blue-50 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5">
+                <i data-lucide="upload" class="w-4 h-4"></i>
+                <span>ঋণ Excel আমদানি</span>
+              </button>
+              <input type="file" id="loanExcelImportInput" accept=".xlsx" class="hidden">
+              <button onclick="openNewLoanModal()" class="bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 rounded-lg text-sm font-medium flex items-center space-x-1.5 shadow transition">
+                <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                <span>নতুন গৃহ ঋণ মঞ্জুর</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Loans Filter Subtabs -->
+          <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-wrap gap-4 items-center justify-between">
+            <div class="flex space-x-2">
+              <button onclick="setLoanSourceFilter('')" id="loanFilterAll" class="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-700 text-white shadow-sm">সকল ঋণ</button>
+              <button onclick="setLoanSourceFilter('OWN_PBS')" id="loanFilterOwn" class="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">নিজস্ব পবিসের ঋণ</button>
+              <button onclick="setLoanSourceFilter('OTHER_PBS')" id="loanFilterOther" class="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">অন্য পবিস হতে গৃহীত ঋণ</button>
+            </div>
+            <div class="flex items-center space-x-3">
+              <input type="text" id="loanSearchInput" oninput="loadLoans()" placeholder="ঋণ নং, মঞ্জুরি নং বা নাম..." class="pl-3 pr-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:ring-emerald-500 focus:border-emerald-500">
+            </div>
+          </div>
+
+          <!-- Loans Table -->
+          <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-sm">
+                <thead>
+                  <tr class="table-header text-gray-600 font-semibold border-b">
+                    <th class="p-3.5">ঋণ নং ও লট</th>
+                    <th class="p-3.5">কর্মকর্তা/কর্মচারী</th>
+                    <th class="p-3.5">উৎস পবিস ও বিতরণ তারিখ</th>
+                    <th class="p-3.5 text-center">সুদের হার</th>
+                    <th class="p-3.5 text-right">বিতরণকৃত ঋণ</th>
+                    <th class="p-3.5 text-right">অবশিষ্ট আসল</th>
+                    <th class="p-3.5 text-right">অবশিষ্ট সুদ</th>
+                    <th class="p-3.5 text-center">অবস্থা</th>
+                    <th class="p-3.5 text-center">লেজার / অ্যাকশন</th>
+                  </tr>
+                </thead>
+                <tbody id="loansTableBody" class="divide-y divide-gray-100">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. SALARY DEDUCTIONS TAB -->
+        <section id="tab-deductions" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">মাসিক কিস্তি কর্তন (বেতন হতে আদায়)</h2>
+              <p class="text-sm text-gray-500">আসল আগে পরিশোধ হবে, আসল শূন্য হলে সুদের টাকা কর্তন হবে</p>
+              <button type="button" onclick="switchTab('loans')" class="mt-1 text-xs font-semibold text-rose-700 hover:text-rose-900 hover:underline">
+                বেতন কর্তন স্থগিত / চালু করতে গৃহ ঋণ তালিকায় যান
+              </button>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button onclick="openModal('singleDeductionModal')" class="bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 rounded-lg text-sm font-medium flex items-center space-x-1.5 shadow transition">
+                <i data-lucide="plus" class="w-4 h-4"></i>
+                <span>একক কিস্তি এন্ট্রি</span>
+              </button>
+              <button onclick="openBatchDeductionModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-lg text-sm font-medium flex items-center space-x-1.5 shadow transition">
+                <i data-lucide="layers" class="w-4 h-4"></i>
+                <span>মাসিক ব্যাচ কর্তন রান</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Filter & Month Selector -->
+          <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-wrap gap-4 items-center justify-between">
+            <div class="flex flex-wrap items-center gap-3">
+              <div class="flex items-center space-x-2">
+                <label class="text-xs font-semibold text-gray-600">কর্তনের মাস:</label>
+                <input type="month" id="deductionMonthFilter" onchange="loadRepayments()" class="border border-gray-300 rounded-lg py-1.5 px-3 text-xs">
+                <button onclick="document.getElementById('deductionMonthFilter').value=''; loadRepayments();" class="text-xs text-gray-500 hover:underline">সকল মাস</button>
+              </div>
+
+              <!-- Bulk Delete Action Button (Appears when rows selected) -->
+              <button id="batchDeleteRepaymentsBtn" onclick="deleteSelectedRepayments()" class="hidden bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition animate-pulse">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                <span id="batchDeleteRepaymentsBtnText">নির্বাচিত কিস্তি মুছুন (০টি)</span>
+              </button>
+            </div>
+            <div class="flex flex-wrap items-center justify-end gap-3">
+              <label class="relative">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2"></i>
+                <input type="search" id="repaymentSearchInput" oninput="filterRepayments()" placeholder="নাম, পে-আইডি, ঋণ নং বা ভাউচার..." class="w-64 max-w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500">
+              </label>
+              <div class="text-xs text-gray-500 text-right">
+                <span id="deductionsTotalSummary" class="font-bold text-emerald-800"></span>
+                <span id="repaymentSearchCount" class="block text-[11px] text-gray-500"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Repayments Table -->
+          <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-sm">
+                <thead>
+                  <tr class="table-header text-gray-600 font-semibold border-b">
+                    <th class="p-3.5 w-10 text-center">
+                      <input type="checkbox" id="selectAllRepaymentsCb" onchange="toggleAllRepaymentsSelection(this.checked)" title="সবগুলো নির্বাচন করুন" class="rounded text-rose-600 focus:ring-rose-500 cursor-pointer w-4 h-4">
+                    </th>
+                    <th class="p-3.5">কর্তনের মাস ও তারিখ</th>
+                    <th class="p-3.5">কর্মকর্তা/কর্মচারী</th>
+                    <th class="p-3.5">ঋণ নং ও উৎস পবিস</th>
+                    <th class="p-3.5 text-right">মোট কর্তন</th>
+                    <th class="p-3.5 text-right text-emerald-700">আসল আদায়</th>
+                    <th class="p-3.5 text-right text-amber-700">সুদ আদায়</th>
+                    <th class="p-3.5 text-center">রেমিট্যান্স অবস্থা</th>
+                    <th class="p-3.5 text-center">অ্যাকশন</th>
+                  </tr>
+                </thead>
+                <tbody id="repaymentsTableBody" class="divide-y divide-gray-100">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. INTEREST PROVISIONS TAB -->
+        <section id="tab-provisions" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">মাসিক সরল সুদ প্রভিশন</h2>
+              <p class="text-sm text-gray-500">২০২০ পূর্ববর্তী ঋণে ৮% ও পরবর্তী ঋণে ৭% হারে প্রতিমাসের আসল স্থিতির উপর অটো প্রভিশন</p>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button onclick="triggerAutoProvisionSync()" class="bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 rounded-lg text-sm font-medium flex items-center space-x-1.5 shadow transition">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                <span>অটো প্রভিশন সিঙ্ক</span>
+              </button>
+              <button onclick="openRunProvisionModal()" class="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2 rounded-lg text-sm font-medium flex items-center space-x-1.5 shadow transition">
+                <i data-lucide="sparkles" class="w-4 h-4"></i>
+                <span>ম্যানুয়াল প্রভিশন রান</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Guidance Box -->
+          <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 flex items-start space-x-3">
+            <i data-lucide="alert-circle" class="w-5 h-5 text-amber-700 shrink-0 mt-0.5"></i>
+            <div>
+              <span class="font-bold">সুদ প্রভিশনের সরকারি নিয়মাবলী ও অটোমেশন (Monthly Rest ব্যালেন্সের উপর হিসাব):</span>
+              <p class="mt-0.5">১. পূর্ববর্তী মাসের শেষ অপরিশোধিত আসলের (Monthly Rest Balance) উপর সুদ হিসাব হয় এবং সংশ্লিষ্ট মাসের শেষ তারিখে পোস্টিং হয়।</p>
+              <p>২. ০১-০১-২০২০ এর পূর্বে (ডিসে/২০১৯ পর্যন্ত) অপরিশোধিত ব্যালেন্সে <strong>৮%</strong> এবং জানু/২০২০ থেকে <strong>৭%</strong> সরল সুদ ধার্য হয় (বিতরণ তারিখের সাথে সম্পর্ক নেই)।</p>
+              <p>৩. বেতন হতে কিস্তি কর্তন রান করার সময় বা নতুন মাসে সিস্টেম <strong>স্বয়ংক্রিয়ভাবে অটো প্রভিশন</strong> সম্পন্ন করে এবং ঋণের অবশিষ্ট সুদ কলামে যোগ করে দেয়।</p>
+              <p>৪. অন্য পবিস হতে গৃহীত ঋণের ক্ষেত্রে <strong>সুদ প্রভিশন প্রয়োজন নাই</strong> (স্বয়ংক্রিয়ভাবে বাদ রাখা হয়)।</p>
+            </div>
+          </div>
+
+          <!-- Provisions History Table -->
+          <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-sm">
+                <thead>
+                  <tr class="table-header text-gray-600 font-semibold border-b">
+                    <th class="p-3.5">প্রভিশনের মাস ও তারিখ</th>
+                    <th class="p-3.5">কর্মকর্তা/কর্মচারী</th>
+                    <th class="p-3.5">ঋণ নং ও বিতরণ তারিখ</th>
+                    <th class="p-3.5 text-center">সুদের হার</th>
+                    <th class="p-3.5 text-right">আসল স্থিতি</th>
+                    <th class="p-3.5 text-right font-bold text-amber-800">ধার্যকৃত সুদ</th>
+                    <th class="p-3.5 text-right">নতুন সুদ স্থিতি</th>
+                    <th class="p-3.5 text-center">অ্যাকশন</th>
+                  </tr>
+                </thead>
+                <tbody id="provisionsTableBody" class="divide-y divide-gray-100">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 6. INTER-PBS REMITTANCES & LETTERS TAB -->
+        <section id="tab-remittances" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">পবিস ভিত্তিক ব্যাংক অ্যাডভাইস ও রেমিট্যান্স পত্র</h2>
+              <p class="text-sm text-gray-500">সংশ্লিষ্ট পবিস ও ডেট রেঞ্জ ভিত্তিক একাধিক মাসের আদায়কৃত কিস্তির অর্থ প্রেরণ ব্যবস্থাপনা</p>
+            </div>
+          </div>
+
+          <!-- PBS & Date Range Filter Bar -->
+          <div class="bg-white p-4 rounded-xl shadow-sm border border-purple-100 flex flex-wrap gap-3 items-end">
+            <div class="flex-1 min-w-[200px]">
+              <label class="block text-xs font-semibold text-gray-700 mb-1">সংশ্লিষ্ট পবিস নির্বাচন করুন:</label>
+              <select id="remittancePbsFilter" onchange="loadRemittances()" class="w-full border border-gray-300 rounded-lg py-2 px-3 text-xs focus:ring-purple-500 focus:border-purple-500">
+                <option value="">সকল পবিস (All Target PBS)</option>
+                <!-- Populated by JS -->
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-700 mb-1">প্রারম্ভিক তারিখ (From Date):</label>
+              <input type="date" id="remittanceFromDate" onchange="loadRemittances()" class="border border-gray-300 rounded-lg py-1.5 px-3 text-xs">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-700 mb-1">সমাপ্তি তারিখ (To Date):</label>
+              <input type="date" id="remittanceToDate" onchange="loadRemittances()" class="border border-gray-300 rounded-lg py-1.5 px-3 text-xs">
+            </div>
+            <div>
+              <button onclick="resetRemittanceFilter()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3.5 py-2 rounded-lg text-xs font-medium">রিসেট ফিল্টার</button>
+            </div>
+          </div>
+
+          <!-- Pending Remittances List (Grouped by PBS & Date Range) -->
+          <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="flex items-center justify-between flex-wrap gap-3">
+              <h3 class="font-bold text-gray-800 flex items-center space-x-2">
+                <i data-lucide="clock" class="w-4 h-4 text-purple-600"></i>
+                <span>পবিস ভিত্তিক প্রেরণের অপেক্ষমাণ কিস্তিসমূহ (Pending Remittances by PBS)</span>
+              </h3>
+              <button onclick="openAllPbsAdviceModal()" class="bg-gradient-to-r from-emerald-700 to-emerald-600 hover:from-emerald-800 hover:to-emerald-700 text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition flex items-center space-x-2">
+                <i data-lucide="layers" class="w-4 h-4"></i>
+                <span>সকল পবিস — একসাথে অ্যাডভাইস</span>
+              </button>
+            </div>
+            <div id="pendingRemittancesContainer" class="overflow-x-auto">
+              <!-- Rendered via JS -->
+            </div>
+          </div>
+        </section>
+
+        <!-- 6.1 GENERATED BANK ADVICES & OFFICIAL LETTERS TAB -->
+        <section id="tab-bank_advices" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">প্রস্তুতকৃত ব্যাংক অ্যাডভাইস ও সরকারি পত্রসমূহ</h2>
+              <p class="text-sm text-gray-500">তৈরি করা ব্যাংক অ্যাডভাইস ও পবিসে প্রেরিত সরকারি পত্র দেখুন, প্রিন্ট করুন বা বাতিল করুন</p>
+            </div>
+            <button onclick="loadGeneratedBankAdvices()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3.5 py-2 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition">
+              <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+              <span>রিফ্রেশ</span>
+            </button>
+          </div>
+
+          <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-sm min-w-[900px]">
+                <thead>
+                  <tr class="table-header text-gray-600 font-semibold border-b bg-gray-50">
+                    <th class="p-3.5">অ্যাডভাইস নং ও তারিখ</th>
+                    <th class="p-3.5">স্মারক নং (Memo No)</th>
+                    <th class="p-3.5">প্রাপক পবিস</th>
+                    <th class="p-3.5">মাস</th>
+                    <th class="p-3.5 text-center">কর্মচারী সংখ্যা</th>
+                    <th class="p-3.5 text-right">সর্বমোট টাকা</th>
+                    <th class="p-3.5 text-center">প্রিন্ট / পত্র দেখুন</th>
+                    <th class="p-3.5 text-center">অ্যাকশন</th>
+                  </tr>
+                </thead>
+                <tbody id="advicesTableBody" class="divide-y divide-gray-100">
+                  <tr><td colspan="8" class="text-center p-8 text-gray-400">অ্যাডভাইস লোড হচ্ছে...</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t bg-gray-50 px-4 py-3">
+              <div class="flex items-center gap-2 text-xs text-gray-600">
+                <label for="advicesPageSize">প্রতি পৃষ্ঠায়:</label>
+                <select id="advicesPageSize" onchange="changeAdvicesPageSize(this.value)" class="border border-gray-300 rounded-md px-2 py-1 bg-white">
+                  <option value="4" selected>সর্বশেষ ৪</option>
+                  <option value="5">৫</option>
+                  <option value="10">১০</option>
+                  <option value="all">All</option>
+                </select>
+                <span id="advicesPageInfo">০টি অ্যাডভাইস</span>
+              </div>
+              <div class="flex items-center justify-end gap-2">
+                <button type="button" id="advicesPrevPage" onclick="changeAdvicesPage(-1)" class="px-3 py-1.5 text-xs font-semibold rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed">আগের</button>
+                <span id="advicesPageNumber" class="text-xs text-gray-600 min-w-16 text-center">পৃষ্ঠা ০ / ০</span>
+                <button type="button" id="advicesNextPage" onclick="changeAdvicesPage(1)" class="px-3 py-1.5 text-xs font-semibold rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed">পরের</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 6.1 TRANSFERRED EMPLOYEES LOANS & DEMAND LETTERS TAB -->
+        <section id="tab-transferred_loans" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">বদলিকৃত ঋণ ও তাগাদা পত্র</h2>
+              <p class="text-sm text-gray-700 font-medium">অন্য পবিসে বদলিকৃত ঋণের বকেয়া কিস্তি, তাগাদা ও আদায় ব্যবস্থাপনা</p>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button onclick="openConsolidatedDemandLetter()" class="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition">
+                <i data-lucide="files" class="w-4 h-4"></i>
+                <span>সকল পবিসের সম্মিলিত তাগাদা পত্র</span>
+              </button>
+              <button onclick="loadTransferredLoans()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3.5 py-2 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                <span>রিফ্রেশ</span>
+              </button>
+              <button onclick="exportTransferredLoansExcel()" class="bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-sm transition">
+                <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+                <span>এক্সেল রিপোর্ট ডাউনলোড</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- KPI Summary Cards -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- Total Transferred Borrowers -->
+            <div class="bg-white p-4 sm:p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+              <div>
+                <p class="text-xs font-medium text-gray-500 uppercase">মোট বদলিকৃত ঋণগ্রহীতা</p>
+                <h3 id="kpiTransferredTotalBorrowers" class="text-2xl font-bold text-gray-900 mt-1">০</h3>
+                <p class="text-[11px] text-amber-600 mt-1 flex items-center font-medium">
+                  <i data-lucide="user-check" class="w-3.5 h-3.5 mr-1"></i> অন্য পবিসে কর্মরত
+                </p>
+              </div>
+              <div class="p-3 bg-amber-50 text-amber-700 rounded-xl">
+                <i data-lucide="users" class="w-6 h-6"></i>
+              </div>
+            </div>
+
+            <!-- Total Overdue Installments -->
+            <div class="bg-white p-4 sm:p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+              <div>
+                <p class="text-xs font-medium text-gray-500 uppercase">সর্বমোট বকেয়া কিস্তি</p>
+                <h3 id="kpiTransferredTotalDueMonths" class="text-2xl font-bold text-red-600 mt-1">০ মাস</h3>
+                <p class="text-[11px] text-red-500 mt-1 flex items-center font-medium">
+                  <i data-lucide="alert-triangle" class="w-3.5 h-3.5 mr-1"></i> অনাদায়ী কিস্তির মাস
+                </p>
+              </div>
+              <div class="p-3 bg-red-50 text-red-700 rounded-xl">
+                <i data-lucide="calendar-x" class="w-6 h-6"></i>
+              </div>
+            </div>
+
+            <!-- Total Overdue Amount -->
+            <div class="bg-white p-4 sm:p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+              <div>
+                <p class="text-xs font-medium text-gray-500 uppercase">মোট বকেয়া কিস্তির টাকা</p>
+                <h3 id="kpiTransferredTotalOverdueAmount" class="text-2xl font-bold text-rose-700 font-mono mt-1">০</h3>
+                <p class="text-[11px] text-rose-600 mt-1 flex items-center font-medium">
+                  <i data-lucide="clock" class="w-3.5 h-3.5 mr-1"></i> তাগাদাযোগ্য পাওনা
+                </p>
+              </div>
+              <div class="p-3 bg-rose-50 text-rose-700 rounded-xl">
+                <i data-lucide="alert-circle" class="w-6 h-6"></i>
+              </div>
+            </div>
+
+            <!-- Total Outstanding Loan Balance -->
+            <div class="bg-white p-4 sm:p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+              <div>
+                <p class="text-xs font-medium text-gray-500 uppercase">মোট অবশিষ্ট ঋণ স্থিতি</p>
+                <h3 id="kpiTransferredTotalOutstanding" class="text-2xl font-bold text-emerald-800 font-mono mt-1">০</h3>
+                <p class="text-[11px] text-emerald-600 mt-1 flex items-center font-medium">
+                  <i data-lucide="shield-check" class="w-3.5 h-3.5 mr-1"></i> আসল ও সুদসহ
+                </p>
+              </div>
+              <div class="p-3 bg-emerald-50 text-emerald-700 rounded-xl">
+                <i data-lucide="banknote" class="w-6 h-6"></i>
+              </div>
+            </div>
+          </div>
+
+          <!-- Filter, Search & Status Bar -->
+          <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap gap-3 items-center justify-between">
+            <div class="flex flex-wrap items-center gap-3 flex-1 min-w-[280px]">
+              <div class="w-64">
+                <label class="block text-[11px] font-bold text-gray-600 mb-1">পদায়নকৃত পবিস ফিল্টার:</label>
+                <select id="transferredPbsFilter" onchange="filterTransferredLoans()" class="w-full border border-gray-300 rounded-lg py-1.5 px-3 text-xs focus:ring-emerald-500">
+                  <option value="">সকল পবিস (All Target PBS)</option>
+                  <!-- Populated by JS -->
+                </select>
+              </div>
+              <div class="flex-1 min-w-[220px]">
+                <label class="block text-[11px] font-bold text-gray-600 mb-1">দ্রুত অনুসন্ধান (Search):</label>
+                <div class="relative">
+                  <input type="text" id="transferredSearchInput" onkeyup="filterTransferredLoans()" placeholder="নাম, পে আইডি বা ঋণ নং..." class="w-full pl-8 pr-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:ring-emerald-500">
+                  <span class="absolute left-2.5 top-2 text-gray-400">
+                    <i data-lucide="search" class="w-3.5 h-3.5"></i>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center space-x-3 pt-4 sm:pt-0">
+              <label class="flex items-center space-x-2 text-xs font-bold text-gray-700 cursor-pointer bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
+                <input type="checkbox" id="transferredOverdueOnlyFilter" onchange="loadTransferredLoans()" checked class="rounded text-amber-600 focus:ring-amber-500">
+                <span>শুধুমাত্র বকেয়া কিস্তিযুক্ত ঋণগ্রহীতা</span>
+              </label>
+              <button onclick="resetTransferredLoansFilter()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition">
+                ফিল্টার রিসেট
+              </button>
+            </div>
+          </div>
+
+          <!-- Overdue Borrowers Main Table Card -->
+          <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="p-4 border-b bg-gray-50/60 flex items-center justify-between flex-wrap gap-2">
+              <h3 class="font-bold text-gray-800 text-sm flex items-center space-x-2">
+                <i data-lucide="list" class="w-4 h-4 text-emerald-700"></i>
+                <span>বদলিকৃত কর্মচারীদের ঋণ ও বকেয়া কিস্তির পূর্ণাঙ্গ তালিকা</span>
+                <span id="transferredTableCountBadge" class="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-0.5 rounded-full font-bold">০ জন</span>
+              </h3>
+              <p class="text-xs text-gray-500">তাগাদা পত্র প্রস্তুত ও প্রেরিত কিস্তি পোস্টিং করতে সংশ্লিষ্ট বাটনে চাপ দিন</p>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="table-header text-gray-700 font-bold border-b bg-gray-100/70">
+                    <th class="p-3 text-center w-10">ক্র:</th>
+                    <th class="p-3">কর্মচারীর নাম ও পে আইডি</th>
+                    <th class="p-3">পদবী ও মোবাইল</th>
+                    <th class="p-3">বর্তমান পদায়নকৃত পবিস</th>
+                    <th class="p-3">ঋণ হিসাব ও মঞ্জুরি</th>
+                    <th class="p-3 text-right">মাসিক কিস্তি</th>
+                    <th class="p-3 text-center">সর্বশেষ পরিশোধ</th>
+                    <th class="p-3 text-center">বকেয়া কিস্তি</th>
+                    <th class="p-3 text-center">বকেয়া সময়সীমা</th>
+                    <th class="p-3 text-right font-black text-rose-700">মোট বকেয়া টাকা</th>
+                    <th class="p-3 text-right">অবশিষ্ট মোট স্থিতি</th>
+                    <th class="p-3 text-center">অ্যাকশন</th>
+                  </tr>
+                </thead>
+                <tbody id="transferredLoansTableBody" class="divide-y divide-gray-100 font-sans">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- 7. LEDGERS TAB -->
+        <section id="tab-ledgers" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">ঋণ হিসাব খতিয়ান ও কন্ট্রোল শিট</h2>
+              <p class="text-sm text-gray-500">নিজস্ব পবিস ও অন্য পবিসের ঋণ লেনদেনের ডেবিট/ক্রেডিট লেজার ও তুলনামূলক স্থিতি বিবরণী</p>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button onclick="printCurrentLedgerTab()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm transition">
+                <i data-lucide="printer" class="w-4 h-4"></i>
+                <span>প্রিন্ট করুন</span>
+              </button>
+              <button onclick="exportCurrentLedgerTabExcel()" class="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm transition">
+                <i data-lucide="download" class="w-4 h-4"></i>
+                <span>এক্সেল ডাউনলোড</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Ledger Subtabs -->
+          <div class="ledger-subtabs flex flex-wrap gap-2 border-b border-gray-200 pb-2">
+            <button onclick="switchLedgerSubtab('general_ledger_14320')" id="subtabBtnGl14320" class="ledger-subtab is-active py-2.5 px-4 font-bold text-sm flex items-center space-x-2 transition">
+              <i data-lucide="book-open" class="w-4 h-4"></i>
+              <span>হাউজ লোন লেজার (AccountsCode: 143.20)</span>
+            </button>
+            <button onclick="switchLedgerSubtab('control_sheet')" id="subtabBtnControlSheet" class="ledger-subtab py-2.5 px-4 font-medium text-sm flex items-center space-x-2 transition">
+              <i data-lucide="clipboard-list" class="w-4 h-4"></i>
+              <span>তুলনামূলক ঋণ স্থিতি (Control Sheet)</span>
+            </button>
+            <button onclick="switchLedgerSubtab('own')" id="subtabBtnOwn" class="ledger-subtab py-2.5 px-4 font-medium text-sm flex items-center space-x-2 transition">
+              <i data-lucide="user-check" class="w-4 h-4"></i>
+              <span>কর্মচারীভিত্তিক খতিয়ান ও স্টেটমেন্ট</span>
+            </button>
+            <button onclick="switchLedgerSubtab('other')" id="subtabBtnOther" class="ledger-subtab py-2.5 px-4 font-medium text-sm flex items-center space-x-2 transition">
+              <i data-lucide="book-marked" class="w-4 h-4"></i>
+              <span>অন্য পবিসের লেজার (AccountsCode: 242.50)</span>
+            </button>
+          </div>
+
+          <!-- 1. General Ledger 143.20 Section (Default) -->
+          <div id="subtabContentGl14320" class="space-y-4">
+            <!-- Filter & Preset Controls Card -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div class="flex flex-wrap items-center gap-3">
+                <div class="flex items-center space-x-2">
+                  <label class="text-xs font-bold text-gray-700 whitespace-nowrap">হিসাব নির্বাচন:</label>
+                  <select id="gl14320EmployeeSelect" onchange="loadHouseLoanLedger14320()" class="border border-gray-300 rounded-lg py-1.5 px-2.5 text-xs focus:ring-2 focus:ring-emerald-500 font-medium max-w-xs">
+                    <option value="">সকল কর্মচারী (AccountsCode: 143.20)</option>
+                    <!-- Populated by JS -->
+                  </select>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <label class="text-xs font-bold text-gray-700 whitespace-nowrap">শুরু (From Date):</label>
+                  <input type="date" id="gl14320FromDateInput" onchange="loadHouseLoanLedger14320()" class="border border-gray-300 rounded-lg py-1.5 px-2.5 text-xs focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <div class="flex items-center space-x-2">
+                  <label class="text-xs font-bold text-gray-700 whitespace-nowrap">সমাপ্তি (To Date):</label>
+                  <input type="date" id="gl14320ToDateInput" onchange="loadHouseLoanLedger14320()" class="border border-gray-300 rounded-lg py-1.5 px-2.5 text-xs focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <div class="flex items-center space-x-2">
+                  <label class="text-xs font-bold text-gray-700 whitespace-nowrap">স্থিতির ধরন:</label>
+                  <select id="gl14320BalanceTypeSelect" onchange="loadHouseLoanLedger14320()" class="border border-gray-300 rounded-lg py-1.5 px-2.5 text-xs focus:ring-2 focus:ring-emerald-500 font-medium">
+                    <option value="principal">কেবল আসল (GL 143.20)</option>
+                    <option value="total">সর্বমোট স্থিতি (আসল + সুদ)</option>
+                  </select>
+                </div>
+                <button type="button" onclick="loadHouseLoanLedger14320()" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold shadow-sm flex items-center space-x-1 transition cursor-pointer">
+                  <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                  <span>রিফ্রেশ</span>
+                </button>
+              </div>
+
+              <!-- Presets & Action Buttons -->
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-[11px] font-semibold text-gray-500">দ্রুত অর্থবছর:</span>
+                <button type="button" onclick="setGl14320Preset('all')" class="px-2.5 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md font-medium border border-gray-200 transition cursor-pointer">
+                  সম্পূর্ণ বিবরণী
+                </button>
+                <button type="button" onclick="setGl14320Preset('cur_fy')" class="px-2.5 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md font-medium border border-gray-200 transition cursor-pointer">
+                  ২০২৬-২০২৭
+                </button>
+                <button type="button" onclick="setGl14320Preset('fy_25_26')" class="px-2.5 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md font-medium border border-gray-200 transition cursor-pointer">
+                  ২০২৫-২০২৬
+                </button>
+                <button type="button" onclick="setGl14320Preset('fy_24_25')" class="px-2.5 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md font-medium border border-gray-200 transition cursor-pointer">
+                  ২০২৪-২০২৫
+                </button>
+                <div class="h-4 w-px bg-gray-300 mx-1"></div>
+                <button type="button" onclick="printGl14320Document()" class="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-bold shadow-sm flex items-center space-x-1.5 transition cursor-pointer">
+                  <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+                  <span>প্রিন্ট খতিয়ান</span>
+                </button>
+                <button type="button" onclick="exportGl14320Excel()" class="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold shadow-sm flex items-center space-x-1.5 transition cursor-pointer">
+                  <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                  <span>এক্সেল ডাউনলোড</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Paper Sheet Preview Box (Matching user screenshot) -->
+            <div id="gl14320PaperContainer" class="bg-slate-100 p-2 sm:p-6 rounded-xl border border-gray-200 flex justify-center overflow-x-auto">
+              <div id="gl14320PaperSheet" class="w-full max-w-4xl bg-white p-6 sm:p-10 rounded-lg shadow-md border border-gray-300 font-sans text-gray-900 min-h-[550px] flex flex-col justify-between">
+                <div class="flex items-center justify-center p-12 text-gray-400">
+                  <i data-lucide="loader-2" class="w-6 h-6 animate-spin mr-2 text-emerald-600"></i>
+                  <span>হাউজ লোন লেজার লোড হচ্ছে...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Control Sheet Section -->
+          <div id="subtabContentControlSheet" class="hidden space-y-4">
+            <!-- Filter & Preset Controls Card -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div class="flex flex-wrap items-center gap-3">
+                <div class="flex items-center space-x-2">
+                  <label class="text-xs font-bold text-gray-700 whitespace-nowrap">As on Date:</label>
+                  <input type="date" id="csAsOnDateInput" onchange="loadOwnPbsControlSheet()" class="border border-gray-300 rounded-lg py-1.5 px-2.5 text-xs focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <div class="flex items-center space-x-2">
+                  <label class="text-xs font-bold text-gray-700 whitespace-nowrap">Comparative Date:</label>
+                  <input type="date" id="csCompDateInput" onchange="loadOwnPbsControlSheet()" class="border border-gray-300 rounded-lg py-1.5 px-2.5 text-xs focus:ring-2 focus:ring-emerald-500">
+                </div>
+                <div class="flex items-center space-x-2">
+                  <label class="text-xs font-bold text-gray-700 whitespace-nowrap">স্থিতির ধরন:</label>
+                  <select id="csBalanceTypeSelect" onchange="loadOwnPbsControlSheet()" class="border border-gray-300 rounded-lg py-1.5 px-2.5 text-xs focus:ring-2 focus:ring-emerald-500 font-medium">
+                    <option value="total">সর্বমোট স্থিতি (আসল + সুদ)</option>
+                    <option value="principal">কেবল আসল স্থিতি (Principal Only)</option>
+                  </select>
+                </div>
+                <button type="button" onclick="loadOwnPbsControlSheet()" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold shadow-sm flex items-center space-x-1 transition cursor-pointer">
+                  <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                  <span>রিফ্রেশ</span>
+                </button>
+              </div>
+
+              <!-- Presets & Quick Actions -->
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-[11px] font-semibold text-gray-500">অর্থবছর দ্রুত ফিল্টার:</span>
+                <button type="button" onclick="setCsPreset('cur_fy')" class="px-2.5 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md font-medium border border-gray-200 transition cursor-pointer">
+                  চলতি অর্থবছর (৩০-জুন-২৬)
+                </button>
+                <button type="button" onclick="setCsPreset('prev_fy')" class="px-2.5 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md font-medium border border-gray-200 transition cursor-pointer">
+                  বিগত অর্থবছর (৩০-জুন-২৫)
+                </button>
+                <button type="button" onclick="setCsPreset('today')" class="px-2.5 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md font-medium border border-gray-200 transition cursor-pointer">
+                  আজকের তারিখ
+                </button>
+                <div class="h-4 w-px bg-gray-300 mx-1"></div>
+                <button type="button" onclick="printControlSheetDocument()" class="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-bold shadow-sm flex items-center space-x-1.5 transition cursor-pointer">
+                  <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+                  <span>প্রিন্ট শিট</span>
+                </button>
+                <button type="button" onclick="exportControlSheetExcel()" class="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold shadow-sm flex items-center space-x-1.5 transition cursor-pointer">
+                  <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                  <span>এক্সেল ডাউনলোড</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Paper Sheet Preview Box -->
+            <div id="csPaperSheetContainer" class="bg-slate-100 p-2 sm:p-6 rounded-xl border border-gray-200 flex justify-center overflow-x-auto">
+              <div id="csPaperSheet" class="w-full max-w-4xl bg-white p-6 sm:p-10 rounded-lg shadow-md border border-gray-300 font-sans text-gray-900 min-h-[500px] flex flex-col justify-between">
+                <div class="flex items-center justify-center p-12 text-gray-400">
+                  <i data-lucide="loader-2" class="w-6 h-6 animate-spin mr-2 text-emerald-600"></i>
+                  <span>কন্ট্রোল শিট লোড হচ্ছে...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Own PBS Ledger Section -->
+          <div id="subtabContentOwn" class="hidden space-y-4">
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div class="flex items-center space-x-3 flex-1">
+                <label class="text-xs font-semibold text-gray-700 whitespace-nowrap">কর্মকর্তা/কর্মচারী নির্বাচন করুন:</label>
+                <select id="ownLedgerEmployeeSelect" onchange="loadOwnPbsLedger()" class="border border-gray-300 rounded-lg py-1.5 px-3 text-xs w-full max-w-md focus:ring-2 focus:ring-emerald-500">
+                  <option value="">--- সকল কর্মকর্তা/কর্মচারী সারসংক্ষেপ ---</option>
+                  <!-- Populated by JS with Employees -->
+                </select>
+              </div>
+              <div id="ownLedgerResetContainer" class="hidden">
+                <button onclick="loadOwnPbsLedger('')" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg border border-gray-300 font-semibold shadow-sm transition inline-flex items-center space-x-1 cursor-pointer">
+                  <span>&larr;</span>
+                  <span>সকল কর্মচারী তালিকায় ফিরুন</span>
+                </button>
+              </div>
+            </div>
+
+            <div id="ownLedgerContent" class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+
+          <!-- Other PBS Ledger Section (AccountsCode: 242.50) -->
+          <div id="subtabContentOther" class="hidden space-y-4">
+            <!-- Filter & Preset Controls Card -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div class="flex flex-wrap items-center gap-3">
+                <div class="flex items-center space-x-2">
+                  <label class="text-xs font-bold text-gray-700 whitespace-nowrap">পবিস নির্বাচন:</label>
+                  <select id="otherPbs24250Select" onchange="loadOtherPbsLedger24250()" class="border border-gray-300 rounded-lg py-1.5 px-2.5 text-xs focus:ring-2 focus:ring-purple-500 font-medium max-w-xs">
+                    <option value="">সকল পবিস (AccountsCode: 242.50)</option>
+                    <!-- Populated by JS -->
+                  </select>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <label class="text-xs font-bold text-gray-700 whitespace-nowrap">শুরু (From Date):</label>
+                  <input type="date" id="otherPbs24250FromDate" onchange="loadOtherPbsLedger24250()" class="border border-gray-300 rounded-lg py-1.5 px-2.5 text-xs focus:ring-2 focus:ring-purple-500">
+                </div>
+                <div class="flex items-center space-x-2">
+                  <label class="text-xs font-bold text-gray-700 whitespace-nowrap">সমাপ্তি (To Date):</label>
+                  <input type="date" id="otherPbs24250ToDate" onchange="loadOtherPbsLedger24250()" class="border border-gray-300 rounded-lg py-1.5 px-2.5 text-xs focus:ring-2 focus:ring-purple-500">
+                </div>
+                <button type="button" onclick="loadOtherPbsLedger24250()" class="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-lg text-xs font-bold shadow-sm flex items-center space-x-1 transition cursor-pointer">
+                  <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                  <span>রিফ্রেশ</span>
+                </button>
+              </div>
+
+              <!-- Presets & Action Buttons -->
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-[11px] font-semibold text-gray-500">দ্রুত অর্থবছর:</span>
+                <button type="button" onclick="setOtherPbs24250Preset('all')" class="px-2.5 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md font-medium border border-gray-200 transition cursor-pointer">
+                  সম্পূর্ণ বিবরণী
+                </button>
+                <button type="button" onclick="setOtherPbs24250Preset('cur_fy')" class="px-2.5 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md font-medium border border-gray-200 transition cursor-pointer">
+                  ২০২৬-২০২৭
+                </button>
+                <button type="button" onclick="setOtherPbs24250Preset('fy_25_26')" class="px-2.5 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md font-medium border border-gray-200 transition cursor-pointer">
+                  ২০২৫-২০২৬
+                </button>
+                <button type="button" onclick="setOtherPbs24250Preset('fy_24_25')" class="px-2.5 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md font-medium border border-gray-200 transition cursor-pointer">
+                  ২০২৪-২০২৫
+                </button>
+                <div class="h-4 w-px bg-gray-300 mx-1"></div>
+                <button type="button" onclick="printOtherPbs24250Document()" class="px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-bold shadow-sm flex items-center space-x-1.5 transition cursor-pointer">
+                  <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+                  <span>প্রিন্ট খতিয়ান</span>
+                </button>
+                <button type="button" onclick="exportOtherPbs24250Excel()" class="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold shadow-sm flex items-center space-x-1.5 transition cursor-pointer">
+                  <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                  <span>এক্সেল ডাউনলোড</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Paper Sheet Preview Box (Matching legacy software Ledger550_242_50) -->
+            <div id="otherPbs24250PaperContainer" class="bg-slate-100 p-2 sm:p-6 rounded-xl border border-gray-200 flex justify-center overflow-x-auto">
+              <div id="otherPbs24250PaperSheet" class="w-full max-w-4xl bg-white p-6 sm:p-10 rounded-lg shadow-md border border-gray-300 font-sans text-gray-900 min-h-[550px] flex flex-col justify-between">
+                <div class="flex items-center justify-center p-12 text-gray-400">
+                  <i data-lucide="loader-2" class="w-6 h-6 animate-spin mr-2 text-purple-600"></i>
+                  <span>অন্য পবিসের লেজার ২৪২.৫০ লোড হচ্ছে...</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Hidden legacy view container -->
+            <div id="otherLedgerContent" class="hidden bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </section>
+
+        <!-- NEW: EMPLOYEE-BASED LOAN LEDGER TAB -->
+        <section id="tab-emp_loan_ledger" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">কর্মচারীভিত্তিক ঋণ খতিয়ান</h2>
+              <p class="text-sm text-gray-500">ঋণ-ওয়ারি সাব-টোটাল ও পবিস-ওয়ারি সাব-টোটালসহ সম্পূর্ণ বিবরণী</p>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button onclick="printEmployeeLoanLedger()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm no-print">
+                <i data-lucide="printer" class="w-4 h-4"></i>
+                <span>প্রিন্ট করুন</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Employee Selector -->
+          <div class="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 no-print">
+            <label class="text-sm font-semibold text-gray-700 whitespace-nowrap">কর্মকর্তা/কর্মচারী নির্বাচন করুন:</label>
+            <select id="empLedgerEmployeeSelect" onchange="loadEmployeeLoanLedger()" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500">
+              <option value="">--- কর্মচারী নির্বাচন করুন ---</option>
+            </select>
+          </div>
+
+          <!-- Ledger Content Area -->
+          <div id="empLoanLedgerContent" class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div class="p-10 text-center text-gray-400">
+              <i data-lucide="user-cog" class="w-10 h-10 mx-auto mb-3 text-gray-300"></i>
+              <p class="text-sm">উপরের তালিকা থেকে একজন কর্মকর্তা/কর্মচারী নির্বাচন করুন</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 8. FISCAL YEAR COMPARATIVE STATEMENT TAB -->
+        <section id="tab-comparative" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">অর্থবছর অনুযায়ী তুলনামূলক স্টেটমেন্ট</h2>
+              <p class="text-sm text-gray-500">প্রারম্ভিক স্থিতি, বছরে বিতরণ, আসল ও সুদ আদায় এবং সমাপনী স্থিতির তুলনামূলক বিশ্লেষণ</p>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button onclick="window.print()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm">
+                <i data-lucide="printer" class="w-4 h-4"></i>
+                <span>প্রিন্ট রিপোর্ট</span>
+              </button>
+              <a href="/api/reports/export/excel?reportType=comparative" target="_blank" class="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm">
+                <i data-lucide="download" class="w-4 h-4"></i>
+                <span>এক্সেল এক্সপোর্ট</span>
+              </a>
+            </div>
+          </div>
+
+          <!-- Comparative Statement Tables Container -->
+          <div id="comparativeStatementContainer" class="space-y-6">
+            <!-- Populated via JS -->
+          </div>
+        </section>
+
+        <!-- 9. AUDIT LOGS TAB -->
+        <section id="tab-audit" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">অডিট লগ রিপোর্ট</h2>
+              <p class="text-sm text-gray-500">সিস্টেমের সকল তৈরি, পরিবর্তন, ডিলিট, ও রিস্টোর সংক্রান্ত অডিট ট্রেইল</p>
+            </div>
+            <button onclick="loadAuditLogs()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm">
+              <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+              <span>রিফ্রেশ</span>
+            </button>
+          </div>
+
+          <!-- Audit Table -->
+          <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="table-header text-gray-600 font-semibold border-b">
+                    <th class="p-3">তারিখ ও সময়</th>
+                    <th class="p-3">ব্যবহারকারী</th>
+                    <th class="p-3">অ্যাকশন</th>
+                    <th class="p-3">মডিউল</th>
+                    <th class="p-3">বিবরণ</th>
+                    <th class="p-3">আইপি ঠিকানা</th>
+                  </tr>
+                </thead>
+                <tbody id="auditLogsTableBody" class="divide-y divide-gray-100 font-mono">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 10. RECYCLE BIN TAB -->
+        <section id="tab-recyclebin" class="tab-pane hidden space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">রিসাইকেল বিন (ডাটা রিকভারি)</h2>
+              <p class="text-sm text-gray-500">কোন রেকর্ড ডিলিট হয়ে গেলে তা পুনরায় ব্যালেন্স সমন্বয় সহ রিকভার করা যায়</p>
+            </div>
+            <button onclick="loadRecycleBin()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm">
+              <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+              <span>রিফ্রেশ বিন</span>
+            </button>
+          </div>
+
+          <!-- Recycle Bin Table -->
+          <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-sm">
+                <thead>
+                  <tr class="table-header text-gray-600 font-semibold border-b">
+                    <th class="p-3.5">রেকর্ড প্রকার</th>
+                    <th class="p-3.5">কোড / আইডি</th>
+                    <th class="p-3.5">রেকর্ড বিবরণ</th>
+                    <th class="p-3.5">ডিলিটের সময়</th>
+                    <th class="p-3.5">ডিলিটকারী</th>
+                    <th class="p-3.5 text-center">পুনরুদ্ধার (Restore)</th>
+                  </tr>
+                </thead>
+                <tbody id="recycleBinTableBody" class="divide-y divide-gray-100">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 11. SETTINGS TAB -->
+        <section id="tab-settings" class="tab-pane hidden space-y-6">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">পবিস সাধারণ তথ্য ও ব্যাংক সেটিংস</h2>
+              <p class="text-sm text-gray-500">পবিসের তথ্য, পত্রের প্যাড/লেটারহেড এবং ব্যাংক হিসাব এখান থেকে সেট করুন</p>
+            </div>
+          </div>
+
+          <!-- Own PBS Form -->
+          <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 class="font-bold text-gray-800 text-lg mb-4 flex items-center space-x-2">
+              <i data-lucide="building" class="w-5 h-5 text-emerald-700"></i>
+              <span>নিজস্ব পল্লী বিদ্যুৎ সমিতির তথ্য, পত্রের প্যাড ও স্বাক্ষরকারী কর্মকর্তা</span>
+            </h3>
+
+            <form id="ownPbsSettingsForm" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="md:col-span-2 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                <h4 class="font-bold text-sm text-blue-950 mb-3">পত্রের প্যাড / লেটারহেড</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">সমিতির লোগো (PNG, JPG বা WebP; সর্বোচ্চ ২ MB)</label>
+                    <input type="file" id="settingLetterheadLogoFile" accept="image/png,image/jpeg,image/webp" class="w-full p-2 bg-white border border-gray-300 rounded-lg text-sm">
+                    <button type="button" id="uploadLetterheadLogoBtn" class="mt-2 px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-semibold">লোগো আপলোড করুন</button>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <img id="settingLetterheadLogoPreview" alt="লেটারহেড লোগো প্রিভিউ" class="hidden w-16 h-16 object-contain bg-white border rounded-lg p-1">
+                    <p class="text-xs text-gray-600">আপলোড না করলে পবিসের বিদ্যমান লোগো ব্যবহার হবে। নির্বাচিত লোগো অফিসিয়াল চিঠি ও ব্যাংক অ্যাডভাইসের প্যাডে দেখাবে।</p>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">ইংরেজি নাম</label>
+                    <input type="text" id="settingPbsEnglishName" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">নামের উপরের লাইন / বোর্ডের নাম</label>
+                    <input type="text" id="settingLetterheadSubtitle" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">ডান পাশের শিরোনাম</label>
+                    <input type="text" id="settingLetterheadRightTitle" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">লোগোর নিচের ব্যাজ/সনদ লেখা (ঐচ্ছিক)</label>
+                    <input type="text" id="settingLetterheadBadgeText" class="w-full p-2 border border-gray-300 rounded-lg text-sm" placeholder="যেমন: ISO 9001:2015 Certified">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">ওয়েবসাইট</label>
+                    <input type="text" id="settingWebsite" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">পবিসের নাম</label>
+                <input type="text" id="settingPbsName" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">পবিস কোড</label>
+                <input type="text" id="settingPbsCode" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+              </div>
+              <div class="md:col-span-2">
+                <label class="block text-xs font-medium text-gray-700 mb-1">ঠিকানা</label>
+                <input type="text" id="settingPbsAddress" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">ফোন</label>
+                <input type="text" id="settingPbsPhone" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">ইমেইল</label>
+                <input type="email" id="settingPbsEmail" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">পবিসের ব্যাংক নাম ও শাখা</label>
+                <input type="text" id="settingBankName" class="w-full p-2 border border-gray-300 rounded-lg text-sm" placeholder="যেমন: রূপালী ব্যাংক পিএলসি, গাজীপুর কর্পোরেট শাখা">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">পবিস ব্যাংক হিসাব নম্বর (Account No)</label>
+                <input type="text" id="settingAccountNo" class="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono font-bold text-emerald-900" placeholder="হিসাব নম্বর">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">পবিস ব্যাংক রাউটিং নম্বর (Routing No)</label>
+                <input type="text" id="settingRoutingNo" class="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono" placeholder="যেমন: 185264187">
+              </div>
+              <div class="md:col-span-2 rounded-lg border border-purple-200 bg-purple-50 p-3">
+                <h4 class="mb-2 text-sm font-bold text-purple-950">ব্যাংক অ্যাডভাইসের অফিস নোট</h4>
+                <p class="mb-3 text-xs text-purple-900">অফিস নোটে প্রস্তুতকারী ও যাচাইকারীর নাম দেখাবে। পদবী নির্ধারিত থাকবে।</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">প্রস্তুতকারী — জুনিয়র অফিসার (হিসাব)</label>
+                    <input type="text" id="settingBankAdvicePreparedByName" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">যাচাইকারী — অফিসার (হিসাব)</label>
+                    <input type="text" id="settingBankAdviceVerifiedByName" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">সহকারী মহাব্যবস্থাপক (অর্থ-হিসাব) নাম</label>
+                <input type="text" id="settingAgmName" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">সিনিয়র জেনারেল ম্যানেজার / জিএম নাম</label>
+                <input type="text" id="settingGmName" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">স্মারক নম্বরের মূল অংশ</label>
+                <input type="text" id="settingMemoNoPrefix" class="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono" placeholder="২৭.১২.৬১০০.৫৪২.০১.০২৪">
+                <p class="text-[11px] text-gray-500 mt-1">পত্র তৈরির সময় এর পরে বছর ও ক্রমিক নম্বর স্বয়ংক্রিয়ভাবে যুক্ত হবে।</p>
+              </div>
+              <div class="md:col-span-2 text-right pt-2">
+                <span id="ownPbsSettingsSaveStatus" role="status" class="text-xs text-gray-500 mr-3">পরিবর্তন করলে স্বয়ংক্রিয়ভাবে সংরক্ষিত হবে</span>
+                <button type="submit" class="bg-emerald-700 hover:bg-emerald-800 text-white font-medium px-5 py-2 rounded-lg text-sm shadow">সংরক্ষণ করুন</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Other PBS Directory -->
+          <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+              <div>
+                <h3 class="font-bold text-gray-800 text-lg flex items-center space-x-2">
+                  <i data-lucide="network" class="w-5 h-5 text-purple-700"></i>
+                  <span>অন্যান্য পল্লী বিদ্যুৎ সমিতিসমূহের ব্যাংক হিসাব ডিরেক্টরি</span>
+                </h3>
+                <p class="text-xs text-gray-500 mt-0.5">৮০টি পল্লী বিদ্যুৎ সমিতির ব্যাংক হিসাব, শাখা ও রাউটিং নম্বর ব্যবস্থাপনা ও সম্পাদন</p>
+              </div>
+              <div class="flex items-center space-x-2">
+                <span id="otherPbsCountBadge" class="px-2.5 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-bold">মোট ৮০টি পবিস</span>
+                <button onclick="openOtherPbsModal()" class="bg-purple-700 hover:bg-purple-800 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1 shadow">
+                  <i data-lucide="plus" class="w-4 h-4"></i>
+                  <span>নতুন পবিস যুক্ত করুন</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Search and Filter Bar -->
+            <div class="mb-4 flex flex-col sm:flex-row gap-2">
+              <div class="relative flex-1">
+                <i data-lucide="search" class="w-4 h-4 absolute left-3 top-2.5 text-gray-400"></i>
+                <input type="text" id="otherPbsSearchInput" oninput="filterOtherPbsTable()" placeholder="পবিসের নাম, ব্যাংকের নাম, শাখা বা হিসাব নম্বর দিয়ে খুঁজুন..." class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-purple-500 focus:outline-none">
+              </div>
+              <button onclick="document.getElementById('otherPbsSearchInput').value=''; filterOtherPbsTable();" class="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-xs font-medium">রিসেট</button>
+            </div>
+
+            <div class="overflow-x-auto max-h-[550px] overflow-y-auto border border-gray-200 rounded-lg">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead class="sticky top-0 bg-gray-100 z-10 shadow-sm">
+                  <tr class="table-header text-gray-700 font-bold border-b border-gray-200">
+                    <th class="p-2.5 text-center w-12">ক্র: নং</th>
+                    <th class="p-2.5 min-w-[170px]">পবিসের নাম ও কোড</th>
+                    <th class="p-2.5 min-w-[180px]">ব্যাংকের নাম ও শাখা</th>
+                    <th class="p-2.5 font-mono min-w-[140px]">হিসাব নম্বর</th>
+                    <th class="p-2.5 font-mono min-w-[110px]">রাউটিং নং</th>
+                    <th class="p-2.5 text-center w-28">অ্যাকশন</th>
+                  </tr>
+                </thead>
+                <tbody id="otherPbsTableBody" class="divide-y divide-gray-100 font-sans">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 12. EMPLOYEE SELF-SERVICE PORTAL TAB -->
+        <!-- 7. EMPLOYEE PORTAL TAB (Self-service Personal Ledger) -->
+        <section id="tab-emp_portal" class="tab-pane hidden space-y-6">
+          
+          <!-- Ledger Title & Action Bar -->
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-4 sm:p-5 rounded-2xl border border-gray-200 shadow-sm">
+            <div>
+              <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+                <span class="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  <i data-lucide="book-open-check" class="w-3.5 h-3.5 mr-1"></i>
+                  <span>ব্যক্তিগত ঋণ হিসাব খতিয়ান (Personal Loan Ledger)</span>
+                </span>
+                <span id="empPortalLoanCountBadge" class="text-xs bg-gray-100 text-gray-700 font-bold px-2 py-0.5 rounded border border-gray-200 font-mono">১টি ঋণ হিসাব</span>
+              </div>
+              <h2 id="empPortalName" class="text-2xl font-extrabold text-gray-900 mt-1">কর্মকর্তা/কর্মচারীর নাম</h2>
+              <p id="empPortalDesignation" class="text-xs sm:text-sm text-gray-600 font-medium">পদবী &bull; পে-আইডি: —</p>
+            </div>
+            
+            <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+              <button type="button" onclick="printEmployeePortalLedger()" class="bg-blue-700 hover:bg-blue-800 text-white px-3.5 py-2 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5 transition cursor-pointer">
+                <i data-lucide="printer" class="w-4 h-4"></i>
+                <span>খতিয়ান প্রিন্ট</span>
+              </button>
+              <button type="button" onclick="exportEmployeePortalLedgerExcel()" class="bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-2 rounded-xl text-xs font-bold shadow flex items-center space-x-1.5 transition cursor-pointer">
+                <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+                <span>এক্সেল ডাউনলোড</span>
+              </button>
+              <button type="button" onclick="loadEmployeePortal()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-xl text-xs font-bold border border-gray-300 shadow-sm flex items-center space-x-1.5 transition cursor-pointer">
+                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                <span>রিফ্রেশ</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Comprehensive Financial Ledger KPI Strip -->
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div class="bg-white p-3.5 rounded-xl border border-gray-200 shadow-sm">
+              <p class="text-[11px] font-semibold text-gray-500">মোট মঞ্জুরিকৃত মূল ঋণ</p>
+              <h4 id="empPortalDisbursed" class="text-base sm:text-lg font-bold text-gray-900 font-mono mt-1">০</h4>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-gray-200 shadow-sm">
+              <p class="text-[11px] font-semibold text-gray-500">মোট আসল পরিশোধ</p>
+              <h4 id="empPortalPrincipalPaid" class="text-base sm:text-lg font-bold text-emerald-700 font-mono mt-1">০</h4>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-blue-200 bg-blue-50/40 shadow-sm">
+              <p class="text-[11px] font-bold text-blue-900">অবশিষ্ট আসল স্থিতি</p>
+              <h4 id="empPortalPrincipal" class="text-base sm:text-lg font-extrabold text-blue-900 font-mono mt-1">০</h4>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-gray-200 shadow-sm">
+              <p class="text-[11px] font-semibold text-gray-500">মোট ধার্যকৃত সরল সুদ</p>
+              <h4 id="empPortalInterestProvisioned" class="text-base sm:text-lg font-bold text-orange-800 font-mono mt-1">০</h4>
+            </div>
+            <div class="bg-white p-3.5 rounded-xl border border-gray-200 shadow-sm">
+              <p class="text-[11px] font-semibold text-gray-500">মোট সুদ পরিশোধ</p>
+              <h4 id="empPortalInterestPaid" class="text-base sm:text-lg font-bold text-amber-700 font-mono mt-1">০</h4>
+            </div>
+            <div class="bg-gradient-to-br from-emerald-800 to-teal-900 p-3.5 rounded-xl shadow text-white">
+              <p class="text-[11px] font-semibold text-emerald-200">সর্বমোট প্রদেয় স্থিতি</p>
+              <h4 id="empPortalTotal" class="text-lg sm:text-xl font-extrabold text-amber-300 font-mono mt-1">০</h4>
+            </div>
+          </div>
+
+          <!-- Employee's Multi-loans Metadata Cards -->
+          <div class="space-y-3">
+            <h3 class="font-bold text-gray-800 text-sm flex items-center space-x-2">
+              <i data-lucide="layers" class="w-4 h-4 text-emerald-700"></i>
+              <span>গৃহীত ঋণ পরিচিতি ও অনুমোদন বিবরণী (Sanction & Terms)</span>
+            </h3>
+            <div id="empLoansContainer" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- Rendered via JS -->
+            </div>
+          </div>
+
+          <!-- Complete Debit / Credit Ledger Book (খতিয়ান বই) -->
+          <div class="space-y-4">
+            <div class="flex items-center justify-between border-b pb-2">
+              <h3 class="font-bold text-gray-800 text-base flex items-center space-x-2">
+                <i data-lucide="book-open" class="w-5 h-5 text-emerald-700"></i>
+                <span>পূর্ণাঙ্গ খতিয়ান বিবরণী (Double-Entry Loan Ledger Statement)</span>
+              </h3>
+              <span class="text-xs text-gray-500 font-medium">※ সকল লেনদেন ও রানিং ব্যালেন্স হিসাবযুক্ত</span>
+            </div>
+
+            <!-- Full Ledger Tables (Rendered per loan via JS) -->
+            <div id="empLedgerTablesContainer" class="space-y-6">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+
+          <!-- Official Verification Footer Note -->
+          <div class="p-3.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-600 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div class="flex items-center space-x-2">
+              <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600 shrink-0"></i>
+              <span>এটি সফটওয়্যার প্রস্তুতকৃত প্রামাণ্য ডিজিটাল খতিয়ান। সকল ভাউচার, কিস্তি কর্তন ও সুদ স্থিতি হিসাব সংরক্ষণ নীতিমালার সাথে সংগতিপূর্ণ।</span>
+            </div>
+            <span class="text-[11px] text-gray-400 font-mono whitespace-nowrap">অডিটযোগ্য লেজার সিস্টেম</span>
+          </div>
+
+        </section>
+
+      </main>
+    </div>
+
+  </div>
+
+  <!-- ==================== MODALS ==================== -->
+
+  <!-- 1. NEW HOUSE LOAN MODAL -->
+  <div id="newLoanModal" class="modal-backdrop hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 my-8">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 id="loanModalTitle" class="font-bold text-lg text-gray-900 flex items-center space-x-2">
+          <i data-lucide="plus-circle" class="w-5 h-5 text-emerald-700"></i>
+          <span>নতুন গৃহ নির্মাণ ঋণ অন্তর্ভুক্তি</span>
+        </h3>
+        <button onclick="closeModal('newLoanModal')" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="newLoanForm" class="space-y-4">
+        <input type="hidden" id="loanEditId" value="">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ঋণ গ্রহণকারী কর্মকর্তা/কর্মচারী *</label>
+            <select id="loanEmployeeSelect" required onchange="updateLoanNumberFromEmployeeAndLot()" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+              <!-- Populated by JS -->
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ঋণ হিসাব নম্বর (Loan No) *</label>
+            <input type="text" id="loanNoInput" required readonly placeholder="কর্মকর্তা ও বরাদ্দ/লট নির্বাচন করলে স্বয়ংক্রিয়ভাবে তৈরি হবে" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-gray-50">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">বরাদ্দ / লট নাম</label>
+            <select id="loanLotInput" onchange="updateLoanNumberFromEmployeeAndLot()" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+              <option value="১ম ঋণ">১ম ঋণ</option>
+              <option value="২য় ঋণ">২য় ঋণ</option>
+              <option value="৩য় ঋণ">৩য় ঋণ</option>
+              <option value="৪র্থ ঋণ">৪র্থ ঋণ</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ঋণের উৎস (Source PBS) *</label>
+            <select id="loanSourceTypeSelect" onchange="toggleLoanOriginPBS()" class="w-full p-2 border border-gray-300 rounded-lg text-sm font-semibold">
+              <option value="OWN_PBS">নিজস্ব পবিস (Current PBS)</option>
+              <option value="OTHER_PBS">অন্যান্য পবিস (Other PBS)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- If Other PBS is selected -->
+        <div id="otherPbsSelectDiv" class="hidden bg-purple-50 p-3 rounded-xl border border-purple-200">
+          <label class="block text-xs font-semibold text-purple-900 mb-1">কোন পবিস হতে ঋণ গ্রহণ করেছেন? *</label>
+          <select id="loanOriginPbsSelect" class="w-full p-2 border border-purple-300 rounded-lg text-sm bg-white">
+            <!-- Populated by JS -->
+          </select>
+          <p class="text-[11px] text-purple-700 mt-1">※ বিধি: অন্য পবিস থেকে গ্রহণকৃত লোনের উপর সুদ প্রভিশন প্রয়োজন নাই। বেতন থেকে কর্তিত অর্থ সেই পবিসে প্রেরিত হবে।</p>
+        </div>
+
+        <!-- Own PBS Only: Sanction & Disbursement Fields (Hidden for Other PBS) -->
+        <div id="ownPbsSanctionFields" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">মঞ্জুরি নম্বর ও তারিখ</label>
+            <input type="text" id="loanSanctionNo" placeholder="যেমন: পবিস-২/প্রশা/১৮-৪৫" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">মঞ্জুরির তারিখ *</label>
+            <input type="date" id="loanSanctionDate" required class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ঋণ বিতরণের তারিখ (Disbursement Date) *</label>
+            <input type="date" id="loanDisbursementDate" required onchange="autoUpdateInterestRule()" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">বিতরণকৃত আসল ঋণ (Principal Amount) *</label>
+            <input type="number" id="loanDisbursedAmount" required min="1000" placeholder="টাকার পরিমাণ" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">মাসিক কিস্তির পরিমাণ (Monthly Installment) *</label>
+            <input type="number" id="loanMonthlyInstallment" required min="100" placeholder="যেমন: ১২০০০" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block text-xs font-semibold text-gray-700 mb-1">সুদের হার (স্বয়ংক্রিয় বিধি নির্ধারিত)</label>
+            <div class="flex items-center space-x-2">
+              <input type="number" step="0.1" id="loanInterestRate" readonly class="w-24 p-2 bg-gray-100 border border-gray-300 rounded-lg text-sm font-bold text-center">
+              <span class="text-xs font-bold">% সরল সুদ</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Interest Rule Banner -->
+        <div id="interestRuleBanner" class="hidden p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800">
+          <!-- Populated by JS -->
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">মন্তব্য</label>
+          <input type="text" id="loanRemarks" placeholder="ঐচ্ছিক মন্তব্য..." class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+        </div>
+
+        <div class="flex items-center justify-end space-x-3 pt-3 border-t">
+          <button type="button" onclick="closeModal('newLoanModal')" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium">বাতিল</button>
+          <button type="submit" id="loanSubmitBtn" class="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-sm font-semibold shadow flex items-center space-x-1.5">
+            <i data-lucide="save" class="w-4 h-4"></i>
+            <span>ঋণ সংরক্ষণ করুন</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 2. NEW / EDIT EMPLOYEE MODAL -->
+  <div id="newEmployeeModal" class="modal-backdrop hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 my-8">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 id="employeeModalTitle" class="font-bold text-lg text-gray-900">নতুন কর্মকর্তা/কর্মচারী নিবন্ধন</h3>
+        <button onclick="closeModal('newEmployeeModal')" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="newEmployeeForm" class="space-y-4">
+        <input type="hidden" id="empEditId" value="">
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">আইডি কোড *</label>
+            <input type="text" id="empCodeInput" required placeholder="EMP-105" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">মোবাইল নম্বর</label>
+            <input type="text" id="empMobileInput" placeholder="01711-XXXXXX" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">কর্মকর্তা/কর্মচারীর পুরো নাম *</label>
+          <input type="text" id="empNameInput" required placeholder="নাম লিখুন" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">পদবী *</label>
+            <input type="text" id="empDesignationInput" required placeholder="যেমন: হিসাব সহকারী" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">বিভাগ</label>
+            <select id="empDepartmentInput" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+              <option value="অর্থ ও হিসাব বিভাগ">অর্থ ও হিসাব বিভাগ</option>
+              <option value="সদস্য সেবা বিভাগ">সদস্য সেবা বিভাগ</option>
+              <option value="অর্থ -রাজস্ব বিভাগ">অর্থ -রাজস্ব বিভাগ</option>
+              <option value="প্রকৌশল বিভাগ">প্রকৌশল বিভাগ</option>
+              <option value="কারিগরি বিভাগ">কারিগরি বিভাগ</option>
+              <option value="ওঅ্যান্ডএম বিভাগ">ওঅ্যান্ডএম বিভাগ</option>
+              <option value="জেনারেল/প্রশাসন">জেনারেল/প্রশাসন</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">যোগদানের তারিখ</label>
+            <input type="date" id="empJoiningDate" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">বর্তমান পদায়ন পবিস *</label>
+            <select id="empPostingPbs" required class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-emerald-500">
+              <!-- Populated dynamically: Own PBS and 80 Other PBSs -->
+            </select>
+          </div>
+        </div>
+
+        <p class="text-[11px] text-gray-500 bg-gray-50 p-2.5 rounded-lg">※ নিবন্ধন সম্পন্ন হলে এই কর্মচারীর জন্য স্বয়ংক্রিয়ভাবে লগইন অ্যাকাউন্ট তৈরি হবে (ইউজারনেম: আইডি কোড, ডিফল্ট পাসওয়ার্ড: password123)।</p>
+
+        <div class="flex items-center justify-end space-x-3 pt-3 border-t">
+          <button type="button" onclick="closeModal('newEmployeeModal')" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm">বাতিল</button>
+          <button type="submit" id="employeeSubmitBtn" class="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-sm font-semibold shadow">নিবন্ধন করুন</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 3. SINGLE DEDUCTION MODAL -->
+  <div id="singleDeductionModal" class="modal-backdrop hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 my-8">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 class="font-bold text-lg text-gray-900">একক কিস্তি কর্তন এন্ট্রি</h3>
+        <button onclick="closeModal('singleDeductionModal')" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="singleDeductionForm" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">ঋণ হিসাব নির্বাচন করুন *</label>
+          <select id="deductionLoanSelect" required onchange="updateDeductionPreview()" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+            <!-- Populated by JS -->
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">কর্তনের মাস (Month) *</label>
+            <input type="month" id="deductionMonthInput" required class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">কর্তনের তারিখ *</label>
+            <input type="date" id="deductionDateInput" required class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">কর্তনকৃত কিস্তির টাকা *</label>
+            <input type="number" id="deductionAmountInput" required min="100" oninput="updateDeductionPreview()" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ভাউচার / রেফারেন্স নং</label>
+            <input type="text" id="deductionVoucherInput" placeholder="ভাউচার নং" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+        </div>
+
+        <!-- Posting Fields in Single Deduction Modal -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-emerald-700 mb-1">আসল আদায়/কর্তন পোস্টিং</label>
+            <input type="text" id="singlePrincipalPostingInput" placeholder="যেমন: গৃহ ঋণ আসল কর্তন হিসাব" class="w-full p-2 border border-emerald-300 rounded-lg text-sm bg-emerald-50 text-gray-800">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-amber-700 mb-1">সুদ আদায়/কর্তন পোস্টিং</label>
+            <input type="text" id="singleInterestPostingInput" placeholder="যেমন: গৃহ ঋণ সুদ কর্তন হিসাব" class="w-full p-2 border border-amber-300 rounded-lg text-sm bg-amber-50 text-gray-800">
+          </div>
+        </div>
+
+
+        <!-- Live Deduction Distribution Preview -->
+        <div id="deductionLivePreview" class="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs space-y-1 text-emerald-900">
+          <div class="font-bold">আদায় নীতি (Principal First):</div>
+          <div id="deductionPreviewText">টাকার পরিমাণ প্রদান করুন...</div>
+        </div>
+
+        <div class="flex items-center justify-end space-x-3 pt-3 border-t">
+          <button type="button" onclick="closeModal('singleDeductionModal')" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm">বাতিল</button>
+          <button type="submit" class="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-sm font-semibold shadow">কর্তন সংরক্ষণ</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 4. BATCH MONTHLY DEDUCTION MODAL -->
+  <div id="batchDeductionModal" class="modal-backdrop hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+    <div id="batchDeductionDialog" class="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-6 shadow-2xl space-y-4 my-auto transition-all duration-200">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 class="font-bold text-lg text-gray-900 flex items-center space-x-2">
+          <i data-lucide="layers" class="w-5 h-5 text-blue-700"></i>
+          <span>মাসিক বেতন হতে ব্যাচ কিস্তি কর্তন রান</span>
+        </h3>
+        <div class="flex items-center space-x-1.5">
+          <!-- Fullscreen Toggle Button -->
+          <button type="button" id="batchModalFullscreenBtn" onclick="toggleBatchModalFullscreen()" title="ফুলস্ক্রিন মুড (Fullscreen)" class="p-1.5 text-gray-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition">
+            <i id="batchModalFullscreenIcon" data-lucide="maximize-2" class="w-5 h-5"></i>
+          </button>
+          <!-- Close Button -->
+          <button type="button" onclick="closeModal('batchDeductionModal')" title="বন্ধ করুন" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+
+      <form id="batchDeductionForm" class="space-y-4 flex flex-col">
+        <p class="text-xs text-gray-600">এই প্রক্রিয়ার মাধ্যমে চলতি মাসের বেতনের সাথে সকল সক্রিয় ও বেতন কর্তন চালু থাকা ঋণের নির্ধারিত মাসিক কিস্তি এক ক্লিকে কর্তন ও ব্যালেন্স আপডেট করা যাবে। যে সকল কর্মচারী ছুটিতে আছেন তাদের আনচেক করে বাদ দিতে পারেন। বদলিকৃত ঋণে স্থায়ীভাবে কর্তন বন্ধ করতে বদলিকৃত ঋণ তালিকা থেকে “কর্তন স্থগিত” করুন।</p>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">কর্তন মাস *</label>
+            <input type="month" id="batchMonthInput" required onchange="handleBatchMonthChange()" class="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">কর্তনের তারিখ *</label>
+            <input type="date" id="batchDateInput" required class="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ভাউচার রেফারেন্স</label>
+            <input type="text" id="batchVoucherInput" placeholder="SALARY-2026-10" class="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+          </div>
+        </div>
+
+        <!-- Live Batch Deduction Loans Preview with Live Search & Filter -->
+        <div id="batchPreviewSection" class="space-y-2 flex-1 flex flex-col min-h-0">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-gray-50 p-2.5 rounded-xl border border-gray-200">
+            <div class="flex items-center space-x-2">
+              <label class="text-xs font-bold text-gray-800 flex items-center space-x-1">
+                <i data-lucide="list-checks" class="w-4 h-4 text-blue-600"></i>
+                <span>কর্তনযোগ্য সক্রিয় ঋণ তালিকা:</span>
+              </label>
+              <span id="batchListCountBadge" class="text-[11px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full font-mono">০ টি</span>
+            </div>
+            
+            <div class="flex items-center space-x-3">
+              <!-- Live Search Input -->
+              <div class="relative flex-1 sm:w-64">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                <input type="text" id="batchSearchInput" oninput="handleBatchSearch(this.value)" placeholder="নাম, পে-আইডি বা লোন নং খুঁজুন..." class="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                <button type="button" id="batchClearSearchBtn" onclick="clearBatchSearch()" title="সার্চ মুছুন" class="hidden absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+
+              <!-- Select all checkbox -->
+              <label class="flex items-center space-x-1.5 cursor-pointer text-xs select-none whitespace-nowrap bg-white px-2.5 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">
+                <input type="checkbox" id="batchSelectAllCheckbox" checked onchange="toggleBatchSelectAll(this.checked)" class="rounded text-blue-600 focus:ring-blue-500 cursor-pointer">
+                <span class="text-gray-700 font-medium">সবাইকে নির্বাচন</span>
+              </label>
+            </div>
+          </div>
+          
+          <div id="batchTableScrollContainer" class="max-h-60 overflow-y-auto border border-gray-200 rounded-xl bg-gray-50/50 shadow-inner">
+            <table class="w-full text-xs text-left">
+              <thead class="bg-gray-100 text-gray-700 sticky top-0 border-b shadow-sm z-10">
+                <tr>
+                  <th class="p-2.5 text-center w-10">#</th>
+                  <th class="p-2.5">কর্মচারী ও পদবী</th>
+                  <th class="p-2.5">ঋণ নং ও উৎস</th>
+                  <th class="p-2.5 text-right">আসল স্থিতি</th>
+                  <th class="p-2.5 text-right font-bold text-blue-900">মাসিক কিস্তি</th>
+                  <th class="p-2.5 text-right font-bold text-emerald-700 bg-emerald-50/70">আসল আদায়/কর্তন পোস্টিং</th>
+                  <th class="p-2.5 text-right font-bold text-amber-700 bg-amber-50/70">সুদ আদায়/কর্তন পোস্টিং</th>
+                </tr>
+              </thead>
+              <tbody id="batchDeductionPreviewTbody" class="divide-y divide-gray-200 bg-white">
+                <!-- Populated dynamically via JS -->
+              </tbody>
+            </table>
+          </div>
+
+          <div id="batchDeductionLiveSummary" class="p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs flex flex-wrap items-center justify-between gap-2 font-semibold text-blue-900">
+            <span>মোট কর্তনযোগ্য ঋণ: <strong id="batchSelectedLoansCount">০</strong> টি <span id="batchSearchFilteredNote" class="text-blue-600 text-[11px] font-normal hidden"></span></span>
+            <div class="flex items-center space-x-3 text-xs">
+              <span class="text-emerald-700 font-bold">আসল আদায়: <strong id="batchSelectedPrincipalTotal">০</strong></span>
+              <span class="text-amber-700 font-bold">সুদ আদায়: <strong id="batchSelectedInterestTotal">০</strong></span>
+              <span class="text-blue-950 font-extrabold border-l pl-3 border-blue-300">সর্বমোট কিস্তি: <strong id="batchSelectedTotalAmount">০</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end space-x-3 pt-3 border-t">
+          <button type="button" onclick="closeModal('batchDeductionModal')" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium">বাতিল</button>
+          <button type="submit" id="batchSubmitBtn" class="px-5 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-sm font-semibold shadow flex items-center space-x-1.5">
+            <i data-lucide="check-circle" class="w-4 h-4"></i>
+            <span>ব্যাচ কর্তন শুরু করুন</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 5. RUN MONTHLY INTEREST PROVISION MODAL -->
+  <div id="runProvisionModal" class="modal-backdrop hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 my-8">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 class="font-bold text-lg text-gray-900 flex items-center space-x-2">
+          <i data-lucide="sparkles" class="w-5 h-5 text-amber-600"></i>
+          <span>মাসিক সরল সুদ প্রভিশন গণনা ও রান</span>
+        </h3>
+        <button onclick="closeModal('runProvisionModal')" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">প্রভিশন মাস *</label>
+            <input type="month" id="provMonthInput" onchange="onProvMonthChange()" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">তারিখ *</label>
+            <input type="date" id="provDateInput" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+        </div>
+
+        <div id="provPreviewContainer" class="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 space-y-1">
+          <div class="font-bold">প্রভিশন প্রিভিউ:</div>
+          <p id="provPreviewStats">মাস নির্বাচন করুন...</p>
+        </div>
+
+        <div class="flex items-center justify-end space-x-3 pt-3 border-t">
+          <button type="button" onclick="closeModal('runProvisionModal')" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm">বাতিল</button>
+          <button type="button" onclick="executeProvisions()" class="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold shadow">সুদ প্রভিশন রান করুন</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. GENERATE BANK ADVICE & LETTER MODAL (PBS & Date Range based) -->
+  <div id="generateAdviceModal" class="modal-backdrop hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl space-y-4 my-8 max-h-[92vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 class="font-bold text-lg text-gray-900 flex items-center space-x-2">
+          <i data-lucide="send" class="w-5 h-5 text-purple-700"></i>
+          <span>পবিস ভিত্তিক ব্যাংক অ্যাডভাইস ও সরকারি পত্র প্রস্তুতকরণ</span>
+        </h3>
+        <button onclick="closeModal('generateAdviceModal')" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="generateAdviceForm" class="space-y-4">
+        <input type="hidden" id="adviceTargetPbsName">
+        <input type="hidden" id="adviceTargetPbsId">
+
+        <!-- Target PBS Info Box -->
+        <div class="p-3.5 bg-purple-50 rounded-xl border border-purple-200 text-xs text-purple-950 space-y-1">
+          <div class="font-bold text-base text-purple-900" id="advicePbsTitle">প্রাপক পবিসের নাম</div>
+          <div id="adviceBankInfoText" class="text-purple-800">ব্যাংক তথ্য...</div>
+        </div>
+
+        <!-- Date Range Filter within Modal -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">প্রারম্ভিক তারিখ (From Date)</label>
+            <input type="date" id="adviceFromDateInput" onchange="filterAdviceInstallmentsByDate()" class="w-full p-2 border border-gray-300 rounded-lg text-xs bg-white">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">সমাপ্তি তারিখ (To Date)</label>
+            <input type="date" id="adviceToDateInput" onchange="filterAdviceInstallmentsByDate()" class="w-full p-2 border border-gray-300 rounded-lg text-xs bg-white">
+          </div>
+        </div>
+
+        <!-- Installments Selection Table -->
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold text-gray-800">প্রেরণযোগ্য কিস্তিসমূহের তালিকা (একাধিক মাসের কিস্তি অন্তর্ভুক্ত):</span>
+            <span class="text-xs font-semibold text-purple-800" id="adviceSelectedSummary">০ টি কিস্তি নির্বাচিত</span>
+          </div>
+          <div class="border border-gray-200 rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead class="bg-gray-100 sticky top-0 border-b border-gray-200">
+                <tr>
+                  <th class="p-2 text-center w-10">
+                    <input type="checkbox" id="adviceSelectAllCheck" onchange="toggleSelectAllAdviceItems(this.checked)" checked class="rounded text-purple-600">
+                  </th>
+                  <th class="p-2">পে আইডি</th>
+                  <th class="p-2">কর্মচারীর নাম ও পদবী</th>
+                  <th class="p-2">ঋণ নং</th>
+                  <th class="p-2 text-center">কিস্তির মাস</th>
+                  <th class="p-2 text-right">টাকার পরিমাণ</th>
+                </tr>
+              </thead>
+              <tbody id="adviceInstallmentsTableBody" class="divide-y divide-gray-100 font-mono">
+                <!-- Rendered via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">অর্থ স্থানান্তরের মাধ্যম (Transfer Channel) *</label>
+            <select id="adviceTransferChannel" class="w-full p-2 border border-gray-300 rounded-lg text-sm bg-white font-medium text-purple-900">
+              <option value="BEFTN" selected>BEFTN (বাংলাদেশ ইলেকট্রনিক ফান্ডস ট্রান্সফার নেটওয়ার্ক)</option>
+              <option value="RTGS">RTGS (রিয়েল টাইম গ্রস সেটেলমেন্ট)</option>
+              <option value="ACCOUNT_TRANSFER">একই ব্যাংক হিসাব ট্রান্সফার (Account Transfer)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ব্যাংক অ্যাডভাইসের তারিখ *</label>
+            <input type="date" id="adviceDateInput" required class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">চিঠির স্মারক নম্বর (Memo No)</label>
+            <input type="text" id="adviceMemoInput" placeholder="স্বয়ংক্রিয় তৈরি হবে" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">মন্তব্য (Remarks)</label>
+            <input type="text" id="adviceRemarksInput" value="বেতন থেকে কর্তনকৃত গৃহ নির্মাণ ঋণের কিস্তির অর্থ বিইএফটিএন (BEFTN) মূলে প্রেরণ" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+        </div>
+
+        <!-- Live Total Banner -->
+        <div class="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-xs text-emerald-950 font-bold">
+          <span>সর্বমোট প্রেরিতব্য অর্থ:</span>
+          <span id="adviceLiveTotalAmount" class="text-base text-emerald-800">০</span>
+        </div>
+
+        <div class="flex items-center justify-end space-x-3 pt-3 border-t">
+          <button type="button" onclick="closeModal('generateAdviceModal')" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm">বাতিল</button>
+          <button type="submit" class="px-5 py-2 bg-purple-700 hover:bg-purple-800 text-white rounded-lg text-sm font-semibold shadow">ব্যাংক অ্যাডভাইস ও চিঠি প্রস্তুত করুন</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 7. PRINTABLE OFFICIAL DOCUMENT MODAL (Bank Advice & Official Letter View) -->
+  <div id="printDocumentModal" class="modal-backdrop hidden fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-1 sm:p-3 overflow-hidden">
+    <div id="printDocumentDialog" class="bg-white rounded-2xl w-full max-w-[96vw] xl:max-w-7xl h-[94vh] shadow-2xl flex flex-col overflow-hidden transition-all duration-200">
+      
+      <!-- Top Fixed Sticky Toolbar (Never scrolls away or hides) -->
+      <div class="no-print bg-slate-50 border-b border-gray-200 px-4 py-2.5 sm:px-6 flex items-center justify-between shrink-0 z-30 shadow-xs">
+        <div class="flex items-center space-x-2">
+          <div class="flex bg-gray-200/90 p-0.5 rounded-lg text-xs font-bold">
+            <button type="button" onclick="switchDocumentView('letter')" id="docViewLetterBtn" class="px-3.5 py-1.5 rounded-md transition text-xs font-bold cursor-pointer">পবিস অবহিতকরণ পত্র</button>
+            <button type="button" onclick="switchDocumentView('advice')" id="docViewAdviceBtn" class="px-3.5 py-1.5 rounded-md transition text-xs font-bold cursor-pointer">ব্যাংক অ্যাডভাইস</button>
+            <button type="button" onclick="switchDocumentView('office_note')" id="docViewOfficeNoteBtn" class="px-3.5 py-1.5 rounded-md transition text-xs font-bold cursor-pointer">অফিস নোট</button>
+          </div>
+          <span class="text-xs text-gray-300 hidden sm:inline">|</span>
+          <span class="text-xs text-gray-500 font-medium hidden sm:inline" id="docAdviceSummaryBadge"></span>
+        </div>
+
+        <div class="flex items-center space-x-2">
+          <!-- Fullscreen Toggle Button -->
+          <button type="button" id="docModalFullscreenBtn" onclick="toggleDocModalFullscreen()" title="ফুলস্ক্রিন মুড (Fullscreen)" class="p-1.5 sm:px-2.5 sm:py-1.5 text-gray-600 hover:text-blue-700 hover:bg-white rounded-lg border border-gray-200 transition cursor-pointer flex items-center space-x-1 text-xs font-semibold">
+            <i id="docModalFullscreenIcon" data-lucide="maximize-2" class="w-4 h-4"></i>
+            <span class="hidden sm:inline">ফুলস্ক্রিন</span>
+          </button>
+          <!-- Print Button -->
+          <button type="button" onclick="printCurrentDocument()" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center space-x-1.5 shadow transition cursor-pointer">
+            <i data-lucide="printer" class="w-4 h-4"></i>
+            <span>প্রিন্ট করুন</span>
+          </button>
+          <!-- Close Button (Always visible) -->
+          <button type="button" onclick="closeModal('printDocumentModal')" title="বন্ধ করুন (Esc)" class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Scrollable Document View Container (Authentic Paper Sheet View, items-start guarantees top never clipped) -->
+      <div id="printDocumentScrollBody" class="flex-1 overflow-y-auto overflow-x-auto p-2 sm:p-6 bg-slate-200/70 flex justify-center items-start">
+        <div id="printableDocumentContent" class="printable-document bg-white p-5 sm:p-10 rounded-xl shadow-lg border border-gray-300 w-full max-w-[1250px] text-gray-900 leading-relaxed min-h-full">
+          <!-- Rendered via JS -->
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 8. OTHER PBS BANK INFORMATION ADD / EDIT MODAL -->
+  <div id="otherPbsModal" class="modal-backdrop hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4 my-8">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 id="otherPbsModalTitle" class="font-bold text-gray-800 text-base flex items-center space-x-2">
+          <i data-lucide="building-2" class="w-5 h-5 text-purple-700"></i>
+          <span>পবিস ব্যাংক তথ্য সম্পাদন</span>
+        </h3>
+        <button type="button" onclick="closeModal('otherPbsModal')" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="otherPbsForm" onsubmit="handleOtherPbsSubmit(event)" class="space-y-3">
+        <input type="hidden" id="editOtherPbsId">
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="sm:col-span-2">
+            <label class="block text-xs font-semibold text-gray-700 mb-1">পবিসের পূর্ণ নাম (বাংলা) *</label>
+            <input type="text" id="editOtherPbsName" required placeholder="যেমন: ময়মনসিংহ পল্লী বিদ্যুৎ সমিতি-২" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ইংরেজি নাম / কোড</label>
+            <input type="text" id="editOtherPbsShortName" placeholder="যেমন: Mymensingh PBS-2" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ব্যাংকের নাম *</label>
+            <input type="text" id="editOtherPbsBankName" required placeholder="যেমন: অগ্রণী ব্যাংক পিএলসি" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block text-xs font-semibold text-gray-700 mb-1">শাখার নাম (Branch Name)</label>
+            <input type="text" id="editOtherPbsBankBranch" placeholder="যেমন: ভালুকা শাখা" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ব্যাংক হিসাব নম্বর (Account No) *</label>
+            <input type="text" id="editOtherPbsAccountNo" required placeholder="যেমন: 0200002083935" class="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono font-bold text-blue-900">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">রাউটিং নম্বর (Routing No)</label>
+            <input type="text" id="editOtherPbsRoutingNo" placeholder="যেমন: 010610314" class="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">যোগাযোগের ব্যক্তি (Contact Person)</label>
+            <input type="text" id="editOtherPbsContactPerson" placeholder="ঐচ্ছিক" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ফোন / মোবাইল</label>
+            <input type="text" id="editOtherPbsPhone" placeholder="ঐচ্ছিক" class="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono">
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end space-x-2 pt-3 border-t">
+          <button type="button" onclick="closeModal('otherPbsModal')" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm">বাতিল</button>
+          <button type="submit" id="otherPbsSubmitBtn" class="px-5 py-2 bg-purple-700 hover:bg-purple-800 text-white rounded-lg text-sm font-semibold shadow">সংরক্ষণ করুন</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 9. QUICK EMPLOYEE SUMMARY & ACTION MODAL -->
+  <div id="quickEmployeeSummaryModal" class="modal-backdrop hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 my-8 max-h-[92vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b pb-3">
+        <div class="flex items-center space-x-3">
+          <div class="w-11 h-11 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-lg shadow-inner">
+            <i data-lucide="user" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <h3 id="quickEmpName" class="font-bold text-lg text-gray-900 leading-tight">কর্মচারীর নাম</h3>
+            <p id="quickEmpSubtext" class="text-xs text-gray-500">পদবী &bull; পে আইডি: 0000</p>
+          </div>
+        </div>
+        <button onclick="closeModal('quickEmployeeSummaryModal')" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div id="quickEmpDetailsContent" class="space-y-4">
+        <!-- Rendered via JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- 10. ALL PBS COMBINED BANK ADVICE MODAL (Global 1-Click Advice) -->
+  <div id="allPbsAdviceModal" class="modal-backdrop hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 my-8">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 class="font-bold text-lg text-emerald-950 flex items-center space-x-2">
+          <i data-lucide="layers" class="w-5 h-5 text-emerald-700"></i>
+          <span>এক ক্লিকে ব্যাংক অ্যাডভাইস (সকল পবিস একত্রিত)</span>
+        </h3>
+        <button onclick="closeModal('allPbsAdviceModal')" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Live Pending Summary Box -->
+      <div id="allPbsLiveSummaryBox" class="bg-purple-50 border border-purple-200 rounded-xl p-3.5 text-xs text-purple-950 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="font-bold text-sm text-purple-900">প্রেরণযোগ্য রেমিট্যান্স সারসংক্ষেপ:</span>
+          <span id="allPbsPendingCountBadge" class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-purple-700 text-white font-mono">০ টি পবিস</span>
+        </div>
+        <div id="allPbsPendingListPreview" class="space-y-1.5 max-h-36 overflow-y-auto pt-1">
+          <!-- Populated dynamically via JS -->
+        </div>
+        <div class="flex items-center justify-between pt-2 border-t border-purple-200/80 font-bold text-xs">
+          <span>সর্বমোট প্রেরণযোগ্য অর্থ:</span>
+          <span id="allPbsPendingTotalAmount" class="text-base text-emerald-800 font-mono font-black">০</span>
+        </div>
+      </div>
+
+      <form id="allPbsAdviceForm" class="space-y-3.5" onsubmit="submitAllPbsAdvice(event)">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">প্রারম্ভিক তারিখ (ঐচ্ছিক)</label>
+            <input type="date" id="allPbsFromDate" onchange="refreshAllPbsAdvicePending()" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">সমাপ্তি তারিখ (ঐচ্ছিক)</label>
+            <input type="date" id="allPbsToDate" onchange="refreshAllPbsAdvicePending()" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">অ্যাডভাইসের তারিখ *</label>
+          <input type="date" id="allPbsAdviceDate" required class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">স্মারক নং (Memo No) — ঐচ্ছিক</label>
+          <input type="text" id="allPbsMemoNo" placeholder="স্বয়ংক্রিয় স্মারক নং তৈরি হবে" class="w-full p-2 border border-gray-300 rounded-lg text-sm">
+        </div>
+
+        <p class="text-[11px] text-gray-500 bg-gray-50 p-2.5 rounded-lg">※ এই বাটনে ক্লিক করলেই সকল অনিষ্পন্ন পবিসের ব্যাংক হিসাব ও রাউটিং নম্বরসহ একটি অফিসিয়াল ব্যাংক অ্যাডভাইস ও সরকারি পত্র সরাসরি প্রস্তুত ও প্রিন্ট ভিউতে প্রদর্শিত হবে।</p>
+
+        <div class="flex items-center justify-end space-x-3 pt-3 border-t">
+          <button type="button" onclick="closeModal('allPbsAdviceModal')" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium">বাতিল</button>
+          <button type="submit" id="allPbsSubmitBtn" class="px-5 py-2 bg-purple-700 hover:bg-purple-800 text-white rounded-lg text-sm font-semibold shadow flex items-center space-x-2">
+            <i data-lucide="file-check" class="w-4 h-4"></i>
+            <span>একত্রিত অ্যাডভাইস প্রস্তুত করুন</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 12. INTER-PBS COLLECTION POSTING MODAL -->
+  <div id="interPbsCollectionModal" class="modal-backdrop hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 my-8">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 class="font-bold text-lg text-gray-900 flex items-center space-x-2">
+          <i data-lucide="check-circle" class="w-5 h-5 text-emerald-700"></i>
+          <span>অন্য পবিস হতে প্রাপ্ত রেমিট্যান্স / কিস্তির টাকা পোস্টিং</span>
+        </h3>
+        <button onclick="closeModal('interPbsCollectionModal')" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Employee & Loan Info Strip -->
+      <div class="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3.5 space-y-1">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="font-bold text-sm text-emerald-950" id="ipcEmpName">-</div>
+          <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200" id="ipcPostingPbs">-</span>
+        </div>
+        <div class="text-xs text-gray-600 flex flex-wrap gap-x-4 gap-y-1">
+          <span>পে আইডি: <strong id="ipcEmpCode" class="font-mono text-gray-800">-</strong></span>
+          <span>পদবী: <strong id="ipcDesignation" class="text-gray-800">-</strong></span>
+          <span>ঋণ নং: <strong id="ipcLoanNo" class="font-mono text-emerald-900">-</strong></span>
+          <span>মাসিক কিস্তি: <strong id="ipcMonthlyInstallment" class="font-mono text-gray-900">-</strong></span>
+        </div>
+        <div class="text-xs text-emerald-800 pt-1 border-t border-emerald-200/60 flex flex-wrap gap-x-4">
+          <span>অবশিষ্ট আসল স্থিতি: <strong id="ipcPrincipalBal" class="font-mono">-</strong></span>
+          <span>অবশিষ্ট সুদ স্থিতি: <strong id="ipcInterestBal" class="font-mono">-</strong></span>
+          <span>সর্বমোট স্থিতি: <strong id="ipcTotalBal" class="font-mono font-bold">-</strong></span>
+          <span>অগ্রিম জমা: <strong id="ipcAdvanceBal" class="font-mono font-bold text-blue-800">-</strong></span>
+        </div>
+      </div>
+
+      <form id="interPbsCollectionForm" onsubmit="submitInterPbsCollection(event)" class="space-y-4">
+        <input type="hidden" id="ipcLoanId">
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">টাকা প্রাপ্তির তারিখ (Receipt Date) *</label>
+            <input type="date" id="ipcReceiptDate" required class="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-emerald-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">ব্যাংক ভাউচার / রেমিট্যান্স অ্যাডভাইস নং</label>
+            <input type="text" id="ipcVoucherNo" placeholder="যেমন: BEFTN-10294 বা VR-05" class="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-emerald-500">
+          </div>
+        </div>
+
+        <div id="ipcStandardPostingFields" class="space-y-4">
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="block text-xs font-bold text-gray-800">পরিশোধযোগ্য বকেয়া মাস নির্বাচন করুন (Checklist) *</label>
+            <button type="button" onclick="toggleAllIpcMonths()" id="ipcToggleMonthsBtn" class="text-[11px] text-emerald-700 hover:text-emerald-900 font-bold underline">
+              সকল নির্বাচন উঠিয়ে দিন
+            </button>
+          </div>
+          <div id="ipcMonthsChecklist" class="max-h-48 overflow-y-auto p-3 bg-gray-50 border border-gray-300 rounded-xl grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <!-- Populated dynamically via JS -->
+          </div>
+        </div>
+
+        <div class="bg-amber-50/80 border border-amber-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <span class="text-xs font-bold text-gray-700 block">নির্বাচিত মাস সংখ্যা ও কিস্তি:</span>
+            <span id="ipcCalculatedSummaryText" class="text-xs text-amber-900 font-medium">০ টি মাস নির্বাচিত</span>
+          </div>
+          <div class="flex items-center space-x-2">
+            <label class="text-xs font-bold text-gray-700 whitespace-nowrap">মোট আদায় টাকা:</label>
+            <input type="number" step="0.01" id="ipcTotalAmount" required class="w-36 p-1.5 border border-amber-400 rounded-lg text-sm font-bold font-mono text-emerald-950 focus:ring-emerald-500">
+          </div>
+        </div>
+        </div>
+
+        <label class="flex items-center gap-2 p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs font-semibold text-blue-900">
+          <input type="checkbox" id="ipcManualPostingToggle" onchange="toggleIpcManualPosting()" class="rounded text-blue-700 focus:ring-blue-500">
+          <span>ম্যানুয়াল পোস্টিং: যেকোনো মাস নির্বাচন করে মোট টাকার অঙ্ক দিন</span>
+        </label>
+
+        <div id="ipcManualPostingFields" class="hidden p-3 bg-blue-50/60 border border-blue-200 rounded-xl">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">কিস্তির মাস নির্বাচন করুন *</label>
+            <div class="flex gap-2">
+              <input type="month" id="ipcManualMonthPicker" class="min-w-0 flex-1 p-2 border border-gray-300 rounded-lg text-sm">
+              <button type="button" onclick="addIpcManualMonth()" class="px-3 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-bold whitespace-nowrap">মাস যোগ</button>
+            </div>
+            <div id="ipcManualMonthsList" class="flex flex-wrap gap-2 mt-2"></div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-700 mb-1">সব মাসের মোট প্রাপ্ত টাকার অঙ্ক *</label>
+            <input type="number" min="0.01" step="0.01" id="ipcManualAmount" oninput="distributeIpcManualTotal()" class="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono">
+            <p id="ipcManualAmountSummary" class="text-[11px] text-blue-800 mt-1">নির্বাচিত মাসগুলোতে সমানভাবে ভাগ হবে।</p>
+          </div>
+          <p class="sm:col-span-2 text-[11px] text-blue-900">
+            মোট টাকা নির্বাচিত মাসগুলোর মধ্যে সমানভাবে ভাগ হবে; অবশিষ্ট পয়সা শেষ মাসে যোগ হবে। টাকা আগে আসল, পরে সুদে সমন্বয় হবে। ঋণের আসল ও সুদ সম্পূর্ণ পরিশোধের পর অতিরিক্ত টাকা অগ্রিম জমা হিসেবে আলাদা থাকবে; এটি ভবিষ্যৎ কিস্তিতে স্বয়ংক্রিয়ভাবে সমন্বয় হবে না।
+          </p>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">মন্তব্য (Remarks / Notes)</label>
+          <input type="text" id="ipcRemarks" oninput="this.dataset.userEdited = 'true'" placeholder="মাস নির্বাচন করলে স্বয়ংক্রিয়ভাবে বসবে" class="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-emerald-500">
+        </div>
+
+        <div class="p-2.5 bg-blue-50 border border-blue-200 text-blue-900 text-[11px] rounded-lg">
+          ※ <strong>হিসাবরক্ষণ বিধি:</strong> এই পোস্টিং এর মাধ্যমে গৃহীত টাকা হতে বাপবিবোর্ড নীতিমালা অনুযায়ী প্রথমে কর্মচারীর আসল ঋণ সমন্বয় হবে, আসল সম্পূর্ণরূপে পরিশোধের পর অবশিষ্ট অর্থ সুদ হিসেবে সমন্বয় করা হবে।
+        </div>
+
+        <div class="flex items-center justify-end space-x-3 pt-3 border-t">
+          <button type="button" onclick="closeModal('interPbsCollectionModal')" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium">বাতিল</button>
+          <button type="submit" id="ipcSubmitBtn" class="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-sm font-bold shadow flex items-center space-x-2">
+            <i data-lucide="check" class="w-4 h-4"></i>
+            <span>কিস্তি পোস্টিং সম্পন্ন করুন</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 13. DEMAND LETTER (তাগাদা পত্র) PREVIEW & PRINT MODAL -->
+  <div id="demandLetterModal" class="modal-backdrop hidden fixed inset-0 bg-transparent z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl space-y-4 my-8">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 class="font-bold text-lg text-gray-900 flex items-center space-x-2">
+          <i data-lucide="file-text" class="w-5 h-5 text-amber-600"></i>
+          <span id="demandLetterModalTitle">সরকারি তাগাদা পত্র (Official BREB Demand Letter Preview)</span>
+        </h3>
+        <div class="flex items-center space-x-2">
+          <button onclick="printDemandLetterDocument()" class="px-3.5 py-1.5 bg-blue-700 hover:bg-blue-800 text-white rounded-lg text-xs font-bold shadow flex items-center space-x-1.5 transition">
+            <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+            <span>প্রিন্ট করুন</span>
+          </button>
+          <button onclick="closeModal('demandLetterModal')" class="text-gray-400 hover:text-gray-600 p-1">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Printable Paper Container -->
+      <div class="bg-white p-3 sm:p-6 rounded-xl border border-gray-200 flex justify-center max-h-[75vh] overflow-y-auto">
+        <div id="demandLetterPaperSheet" class="w-full max-w-3xl bg-white p-8 sm:p-12 rounded-lg border border-gray-200 font-sans text-gray-900 space-y-6 leading-relaxed">
+          <!-- Populated dynamically via JS -->
+          <div class="text-center py-12 text-gray-400">
+            <i data-lucide="loader-2" class="w-8 h-8 animate-spin mx-auto text-emerald-600 mb-2"></i>
+            <span>তাগাদা পত্র তৈরি হচ্ছে...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between pt-2 border-t text-xs text-gray-500">
+        <span>* এই তাগাদা পত্রটি বাপবিবোর্ড প্রমিত ফরম্যাট ও বিধি মোতাবেক স্বয়ংক্রিয়ভাবে প্রস্তুতকৃত।</span>
+        <button onclick="closeModal('demandLetterModal')" class="px-4 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold">
+          বন্ধ করুন
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 14. CHANGE POSTING PBS MODAL -->
+  <div id="changePostingPbsModal" class="modal-backdrop hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 class="font-bold text-base text-gray-900 flex items-center space-x-2">
+          <i data-lucide="arrow-right-left" class="w-5 h-5 text-emerald-700"></i>
+          <span>কর্মচারীর বর্তমান পদায়নকৃত পবিস পরিবর্তন</span>
+        </h3>
+        <button onclick="closeModal('changePostingPbsModal')" class="text-gray-400 hover:text-gray-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="changePostingPbsForm" onsubmit="submitChangePostingPbs(event)" class="space-y-4">
+        <input type="hidden" id="cppEmployeeId">
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">কর্মকর্তা/কর্মচারীর নাম</label>
+          <input type="text" id="cppEmployeeName" readonly class="w-full p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-bold text-gray-800">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">বর্তমান পদায়নকৃত পবিস *</label>
+          <select id="cppPostingPbsSelect" required class="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-emerald-500">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <div class="flex items-center justify-end space-x-3 pt-3 border-t">
+          <button type="button" onclick="closeModal('changePostingPbsModal')" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium">বাতিল</button>
+          <button type="submit" class="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-sm font-bold shadow flex items-center space-x-2">
+            <i data-lucide="save" class="w-4 h-4"></i>
+            <span>হালনাগাদ করুন</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="changePasswordModal" class="modal-backdrop hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h3 class="font-bold text-lg text-gray-900">নিজের পাসওয়ার্ড পরিবর্তন</h3>
+        <button type="button" onclick="closeModal('changePasswordModal')" class="text-gray-400 hover:text-gray-600" aria-label="বন্ধ করুন">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <form id="changePasswordForm" class="space-y-3">
+        <div>
+          <label for="currentPasswordInput" class="block text-xs font-semibold text-gray-700 mb-1">বর্তমান পাসওয়ার্ড</label>
+          <input id="currentPasswordInput" type="password" autocomplete="current-password" required class="w-full p-2.5 border border-gray-300 rounded-lg text-sm">
+        </div>
+        <div>
+          <label for="newPasswordInput" class="block text-xs font-semibold text-gray-700 mb-1">নতুন পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর)</label>
+          <input id="newPasswordInput" type="password" autocomplete="new-password" minlength="6" required class="w-full p-2.5 border border-gray-300 rounded-lg text-sm">
+        </div>
+        <div>
+          <label for="confirmPasswordInput" class="block text-xs font-semibold text-gray-700 mb-1">নতুন পাসওয়ার্ড নিশ্চিত করুন</label>
+          <input id="confirmPasswordInput" type="password" autocomplete="new-password" minlength="6" required class="w-full p-2.5 border border-gray-300 rounded-lg text-sm">
+        </div>
+        <div class="flex justify-end gap-2 border-t pt-3">
+          <button type="button" onclick="closeModal('changePasswordModal')" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm">বাতিল</button>
+          <button type="submit" id="changePasswordSubmitBtn" class="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-sm font-semibold">পাসওয়ার্ড সংরক্ষণ</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+  <!-- SCRIPTS -->
+  <script src="/js/api.js?v=2.2.9"></script>
+  <script src="/js/app.js?v=2.3.38"></script>
+  <script>
+    // Initialize Lucide icons
+    lucide.createIcons();
+
+    // Register / update PWA Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js').then((reg) => {
+          reg.update();
+        }).catch(err => console.log('SW reg error:', err));
+      });
+    }
+
+    // Network connection watcher
+    function updateOnlineStatus() {
+      const badge = document.getElementById('connectionBadge');
+      if (navigator.onLine) {
+        badge.className = 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800';
+        badge.title = 'নেটৱৰ্ক সংযুক্ত। তথ্য cloud-এ নয়, এই অ্যাপ সার্ভারের database\\pbs_house_loan.db ফাইলে সংরক্ষিত হয়।';
+        badge.innerHTML = '<span class="w-2 h-2 mr-1.5 bg-emerald-500 rounded-full animate-pulse"></span>নেটৱৰ্ক সংযুক্ত';
+      } else {
+        badge.className = 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800';
+        badge.title = 'নেটৱৰ্ক সংযোগ নেই। ক্যাশ হওয়া পেজ দেখা যেতে পারে, কিন্তু নতুন তথ্য সংরক্ষণের জন্য অ্যাপ সার্ভারের সংযোগ লাগবে।';
+        badge.innerHTML = '<span class="w-2 h-2 mr-1.5 bg-red-500 rounded-full"></span>নেটৱৰ্ক বিচ্ছিন্ন';
+      }
+    }
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+    updateOnlineStatus();
+  </script>
+</body>
+</html>
