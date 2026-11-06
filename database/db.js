@@ -2,6 +2,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 function resolveDataDir() {
   if (process.env.PBS_DATA_DIR) {
@@ -425,12 +426,16 @@ function initSchema() {
     `).run();
   }
 
-  const masterAdminPassword = process.env.MASTER_ADMIN_PASSWORD;
+  const adminUser = db.prepare('SELECT id, role, is_master_admin FROM users WHERE username = ?').get('admin');
+  const isPortableExe = process.env.PBS_PORTABLE_EXE === '1';
+  const generatedAdminPassword = isPortableExe && (!adminUser || !adminUser.is_master_admin)
+    ? crypto.randomBytes(18).toString('base64url')
+    : null;
+  const masterAdminPassword = process.env.MASTER_ADMIN_PASSWORD || generatedAdminPassword;
   if (masterAdminPassword && masterAdminPassword.length < 8) {
     throw new Error('MASTER_ADMIN_PASSWORD must be at least 8 characters long.');
   }
 
-  const adminUser = db.prepare('SELECT id, role, is_master_admin FROM users WHERE username = ?').get('admin');
   if (!adminUser && masterAdminPassword) {
     const adminHash = bcrypt.hashSync(masterAdminPassword, bcrypt.genSaltSync(10));
     db.prepare(`
@@ -446,10 +451,15 @@ function initSchema() {
   } else if (!adminUser || !adminUser.is_master_admin) {
     console.warn('[Database] Master admin is not provisioned. Set MASTER_ADMIN_PASSWORD and restart the server.');
   }
+  if (generatedAdminPassword) {
+    console.log(`[Portable first-run] Admin username: admin`);
+    console.log(`[Portable first-run] Temporary password: ${generatedAdminPassword}`);
+    console.log('[Portable first-run] Save this password securely. It is shown only once.');
+  }
 
   // Preserve existing Accounts credentials; seed them only when the user is absent.
   const accountsUser = db.prepare('SELECT id FROM users WHERE username = ?').get('accounts');
-  if (!accountsUser) {
+  if (!accountsUser && !isPortableExe) {
     const accountsHash = bcrypt.hashSync('accounts123', bcrypt.genSaltSync(10));
     db.prepare(`
       INSERT INTO users (username, password_hash, full_name, role)

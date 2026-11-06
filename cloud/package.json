@@ -4,6 +4,7 @@
   "private": true,
   "description": "Cloud edition of PBS House Loan Management System",
   "scripts": {
+    "build": "node scripts/build.js",
     "start": "node api/local.js",
     "test": "node --test"
   },

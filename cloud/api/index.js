@@ -1,5 +1,15 @@
 const express = require('express');
 const { authenticateToken, login, requireRole } = require('./lib/auth');
+const authRoutes = require('./routes/auth');
+const employeeRoutes = require('./routes/employees');
+const loanRoutes = require('./routes/loans');
+const repaymentRoutes = require('./routes/repayments');
+const provisionRoutes = require('./routes/provisions');
+const recycleBinRoutes = require('./routes/recyclebin');
+const remittanceRoutes = require('./routes/remittances');
+const reportRoutes = require('./routes/reports');
+const settingsRoutes = require('./routes/settings');
+const syncRoutes = require('./routes/sync');
 
 const app = express();
 app.disable('x-powered-by');
@@ -26,9 +36,16 @@ app.post('/api/auth/login', async (req, res, next) => {
   }
 });
 
-app.get('/api/auth/me', authenticateToken, (req, res) => {
-  res.json({ success: true, user: req.user });
-});
+app.use('/api/auth', authRoutes);
+app.use('/api/employees', employeeRoutes);
+app.use('/api/loans', loanRoutes);
+app.use('/api/repayments', repaymentRoutes);
+app.use('/api/provisions', provisionRoutes);
+app.use('/api/recyclebin', recycleBinRoutes);
+app.use('/api/remittances', remittanceRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/sync', syncRoutes);
 
 app.get('/api/admin/health', authenticateToken, requireRole(['admin']), (req, res) => {
   res.json({ success: true, user: req.user, edition: 'cloud-firestore' });

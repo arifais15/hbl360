@@ -30,7 +30,42 @@ test('protected identity endpoint rejects requests without a bearer token', asyn
   });
 });
 
-test('protected identity endpoint returns only the verified token claims', async () => {
+test('repayment endpoints are mounted and require authentication', async () => {
+  await withServer(async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/repayments`);
+    assert.equal(response.status, 401);
+  });
+});
+
+test('provision endpoints are mounted and require authentication', async () => {
+  await withServer(async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/provisions`);
+    assert.equal(response.status, 401);
+  });
+});
+
+test('recycle bin endpoints are mounted and require authentication', async () => {
+  await withServer(async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/recyclebin`);
+    assert.equal(response.status, 401);
+  });
+});
+
+test('remittance endpoints are mounted and require authentication', async () => {
+  await withServer(async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/remittances/pending`);
+    assert.equal(response.status, 401);
+  });
+});
+
+test('report endpoints are mounted and require authentication', async () => {
+  await withServer(async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/reports/comparative-statement`);
+    assert.equal(response.status, 401);
+  });
+});
+
+test('protected admin endpoint returns verified token claims without a Firestore connection', async () => {
   const secret = 'test-secret-with-more-than-thirty-two-bytes';
   process.env.JWT_SECRET = secret;
   const token = jwt.sign({
@@ -43,7 +78,7 @@ test('protected identity endpoint returns only the verified token claims', async
   }, secret);
 
   await withServer(async baseUrl => {
-    const response = await fetch(`${baseUrl}/api/auth/me`, {
+    const response = await fetch(`${baseUrl}/api/admin/health`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     assert.equal(response.status, 200);

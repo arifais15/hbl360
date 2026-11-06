@@ -6,7 +6,13 @@ The cloud edition starts with an empty, namespaced Firestore data set. It does n
 
 ## Current status
 
-The cloud API foundation currently includes a health check, a bootstrap administrator login, and authenticated identity/role checks. The existing loan-management API and user interface have not yet been migrated. Do not deploy this branch for operational financial records until the remaining API routes, authorization checks, Firestore transactions, real-time updates, and migration tests are complete.
+This branch is an active, incomplete migration, not a production-ready replacement for the offline application.
+
+The cloud API currently includes authentication and role checks, employee and loan CRUD, PBS settings, repayments (including batch and multi-month posting/reversal), interest provisions, bank-advice/remittance workflows, basic employee/loan/remittance reports, recycle-bin listing/restoration, and audit-log polling for the browser UI. The cloud build copies the offline UI into the Vercel output and disables its SQLite-era offline API cache fallback.
+
+The following offline workflows still need cloud parity: transferred-loan collection and demand-letter workflows, the full report/ledger set and Excel exports/import templates, and broader coverage of restore/delete behavior. Cloud API integration tests currently verify route mounting and authentication, but do not exercise Firestore transactions against an emulator. Read helpers currently cap collection reads at 1,000 records, and write batches are intentionally capped to stay under Firestore transaction limits. The browser notices audited changes by polling every five seconds; this is not Firestore snapshot streaming.
+
+Do not deploy this branch for operational financial records until the remaining workflows are migrated, Firestore-backed behavior is tested, authorization and transaction paths are reviewed, and the intended Firebase project/service-account configuration is verified.
 
 ## Local API development
 
