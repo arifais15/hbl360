@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "build:exe": "caxa --input . --output PBS_House_Loan_System.exe --exclude \"scratch\" \"tests\" \".git\" \"*.log\" -- \"{{caxa}}/node_modules/.bin/node\" \"{{caxa}}/server.js\""
+    "build:exe": "caxa --input . --output PBS_House_Loan_System.exe --exclude \"scratch\" \"tests\" \".git\" \".env*\" \"*.log\" -- \"{{caxa}}/node_modules/.bin/node\" \"{{caxa}}/server.js\""
   },
   "keywords": [],
   "author": "",
@@ -16,6 +16,7 @@
     "better-sqlite3": "^13.0.3",
     "cors": "^2.8.6",
     "dotenv": "^18.0.8",
+    "exceljs": "^4.4.0",
     "express": "^5.3.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",

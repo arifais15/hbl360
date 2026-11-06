@@ -4,19 +4,40 @@
  * principal-first repayment deduction logic, and Bengali currency/number converters.
  */
 
+const db = require('../database/db');
+
 const CUTOFF_DATE = '2020-01-01';
 const PRE_2020_RATE = 8.0;  // 8% simple interest per annum
 const POST_2020_RATE = 7.0; // 7% simple interest per annum
 
 /**
- * Determine default interest rate based on calculation period/month (NOT loan disbursement date)
+ * Determine interest rate based on date/month by checking configured interest_rules in database.
  * Rule:
- * - Up to December 2019 (pre-2020): 8.0% simple interest per annum on unpaid balance
- * - From January 2020 onwards: 7.0% simple interest per annum on unpaid balance of the same loan
+ * - Up to December 2019 (pre-2020): 8.0% simple interest per annum
+ * - From January 2020 onwards: 7.0% simple interest per annum (or user configured new rates & dates)
  */
 function getApplicableInterestRate(periodMonthOrDate) {
   if (!periodMonthOrDate) return POST_2020_RATE;
   const str = String(periodMonthOrDate).trim();
+  const dateStr = str.length === 7 ? `${str}-15` : str.slice(0, 10);
+
+  try {
+    const rule = db.prepare(`
+      SELECT rate FROM interest_rules
+      WHERE is_active = 1
+        AND effective_from_date <= ?
+        AND (effective_to_date IS NULL OR effective_to_date >= ?)
+      ORDER BY effective_from_date DESC, id DESC
+      LIMIT 1
+    `).get(dateStr, dateStr);
+
+    if (rule && rule.rate !== null && rule.rate !== undefined) {
+      return parseFloat(rule.rate);
+    }
+  } catch (err) {
+    // If DB is initializing or query fails, fall back to default government rule
+  }
+
   if (str.length === 7) {
     return str < '2020-01' ? PRE_2020_RATE : POST_2020_RATE;
   }
@@ -32,13 +53,22 @@ function isInterestProvisionApplicable(loanSourceType) {
 }
 
 /**
- * Calculate simple monthly interest provision on current principal balance
- * Formula: (Principal Balance * Annual Interest Rate) / (100 * 12)
+ * Calculate simple monthly interest provision on current principal balance.
+ * If activeDays and daysInMonth are provided (for fraction months like disbursement or cutoff month),
+ * it calculates the exact day-fraction interest:
+ * Formula: ((Principal Balance * Annual Interest Rate) / (100 * 12)) * (activeDays / daysInMonth)
  */
-function calculateMonthlyInterestProvision(principalBalance, annualRate) {
+function calculateMonthlyInterestProvision(principalBalance, annualRate, activeDays = null, daysInMonth = null) {
   if (principalBalance <= 0 || annualRate <= 0) return 0;
-  const rawInterest = (principalBalance * (annualRate / 100)) / 12;
-  return Math.round(rawInterest); // Standard BREB accounting rounds to whole Taka
+  const fullMonthInterest = (principalBalance * (annualRate / 100)) / 12;
+
+  if (activeDays !== null && daysInMonth !== null && daysInMonth > 0 && activeDays < daysInMonth) {
+    if (activeDays <= 0) return 0;
+    const fractionInterest = fullMonthInterest * (activeDays / daysInMonth);
+    return Math.round(fractionInterest);
+  }
+
+  return Math.round(fullMonthInterest); // Standard BREB accounting rounds to whole Taka
 }
 
 /**
@@ -93,17 +123,23 @@ function amountInBengaliWords(number) {
   const n = Math.floor(number);
   if (n === 0) return 'শূন্য টাকা মাত্র';
 
-  const units = ['', 'এক', 'দুই', 'তিন', 'চার', 'পাঁচ', 'ছয়', 'সাত', 'আট', 'নয়'];
-  const teens = ['দশ', 'এগারো', 'বারো', 'তেরো', 'চৌদ্দ', 'পনেরো', 'ষোল', 'সতেরো', 'আঠারো', 'উনিশ'];
-  const tens = ['', '', 'বিশ', 'ত্রিশ', 'চল্লিশ', 'পঞ্চাশ', 'ষাট', 'সত্তর', 'আশি', 'নব্বই'];
+  const bnNumbers1to99 = [
+    '', 'এক', 'দুই', 'তিন', 'চার', 'পাঁচ', 'ছয়', 'সাত', 'আট', 'নয়',
+    'দশ', 'এগারো', 'বারো', 'তেরো', 'চৌদ্দ', 'পনেরো', 'ষোল', 'সতেরো', 'আঠারো', 'উনিশ',
+    'বিশ', 'একুশ', 'বাইশ', 'তেইশ', 'চব্বিশ', 'পঁচিশ', 'ছাব্বিশ', 'সাতাশ', 'আঠাশ', 'উনত্রিশ',
+    'ত্রিশ', 'একত্রিশ', 'বত্রিশ', 'তেত্রিশ', 'চৌত্রিশ', 'পঁয়ত্রিশ', 'ছত্রিশ', 'সাঁয়ত্রিশ', 'আটত্রিশ', 'উনচল্লিশ',
+    'চল্লিশ', 'একচল্লিশ', 'বিয়াল্লিশ', 'তেতাল্লিশ', 'চুয়াল্লিশ', 'পঁয়তাল্লিশ', 'ছেচল্লিশ', 'সাতচল্লিশ', 'আটচল্লিশ', 'উনপঞ্চাশ',
+    'পঞ্চাশ', 'একান্ন', 'বায়ান্ন', 'তিপ্পান্ন', 'চুয়ান্ন', 'পঞ্চান্ন', 'ছাপ্পান্ন', 'সাতান্ন', 'আটান্ন', 'উনষাট',
+    'ষাট', 'একষট্টি', 'বাষট্টি', 'তেষট্টি', 'চৌষট্টি', 'পঁয়ষট্টি', 'ছেষট্টি', 'সাতষট্টি', 'আটষট্টি', 'উনসত্তর',
+    'সত্তর', 'একাত্তর', 'বাহাত্তর', 'তিয়াত্তর', 'চুয়াত্তর', 'পঁচাত্তর', 'ছিয়াত্তর', 'সাতাত্তর', 'আটাত্তর', 'উনাশি',
+    'আশি', 'একাশি', 'বিরাশি', 'তিরাশি', 'চুরাশি', 'পঁচাশি', 'ছিয়াশি', 'সাতাশি', 'আটাশি', 'ঊননব্বই',
+    'নব্বই', 'একানব্বই', 'বানব্বই', 'তিরানব্বই', 'চুরানব্বই', 'পঁচানব্বই', 'ছিয়ানব্বই', 'সাতানব্বই', 'আটানব্বই', 'নিরানব্বই'
+  ];
 
   function convertTwoDigits(num) {
-    if (num === 0) return '';
-    if (num < 10) return units[num];
-    if (num < 20) return teens[num - 10];
-    const t = Math.floor(num / 10);
-    const u = num % 10;
-    return (tens[t] + (u !== 0 ? ' ' + units[u] : '')).trim();
+    if (num <= 0) return '';
+    if (num < 100) return bnNumbers1to99[num] || '';
+    return '';
   }
 
   let words = '';
@@ -123,7 +159,7 @@ function amountInBengaliWords(number) {
     words += convertTwoDigits(thousand) + ' হাজার ';
   }
   if (hundred > 0) {
-    words += units[hundred] + ' শত ';
+    words += bnNumbers1to99[hundred] + ' শত ';
   }
   if (rest > 0) {
     words += convertTwoDigits(rest);
@@ -203,6 +239,181 @@ function getPreviousMonth(yyyyMm) {
   return `${py}-${pm}`;
 }
 
+/**
+ * Calculate month-by-month interest simulation schedule for a loan from disbursement/sanction date
+ * to a user-specified cutoff date.
+ * Rules:
+ * - 12-month grace period from disbursement: No principal installment deduction during grace months,
+ *   only monthly simple interest is calculated on full principal.
+ * - From Month 13 onwards: Monthly principal deduction (default 120 installments, or user-editable installment),
+ *   and monthly interest calculated on the reducing principal balance.
+ * - Rate: 8% simple interest per annum up to 2019-12 (pre-2020), 7% from 2020-01 onwards.
+ * - Formula: (Principal Balance * Rate / 100) / 12 rounded to nearest Taka.
+ */
+function calculateLoanInterestSchedule(options) {
+  const {
+    loanId,
+    disbursedAmount = 0,
+    disbursementDate,
+    sanctionDate,
+    fromDate,
+    toDate,
+    graceMonths = 12,
+    installmentCount = 120,
+    customInstallment = null,
+    actualRepayments = null
+  } = options;
+
+  const startDateStr = fromDate || disbursementDate || sanctionDate;
+  if (!startDateStr) {
+    return { success: false, message: 'প্রারম্ভিক তারিখ বা ঋণ মঞ্জুরি/বিতরণের তারিখ পাওয়া যায়নি।' };
+  }
+
+  const startYear = parseInt(startDateStr.slice(0, 4), 10);
+  const startMonth = parseInt(startDateStr.slice(5, 7), 10);
+  const startDay = parseInt(startDateStr.slice(8, 10), 10) || 1;
+
+  const endStr = toDate || new Date().toISOString().slice(0, 10);
+  const endYear = parseInt(endStr.slice(0, 4), 10);
+  const endMonth = parseInt(endStr.slice(5, 7), 10);
+  const endDay = parseInt(endStr.slice(8, 10), 10) || 28;
+
+  const totalPrincipal = Math.max(0, Math.round(Number(disbursedAmount) || 0));
+  let runningPrincipal = totalPrincipal;
+  let cumulativeInterest = 0;
+  let cumulativePrincipalPaid = 0;
+
+  // Default installment if not custom
+  const defaultInstallment = (installmentCount > 0 && totalPrincipal > 0)
+    ? Math.round(totalPrincipal / installmentCount)
+    : 0;
+  const monthlyDeduction = (customInstallment !== null && customInstallment !== undefined && customInstallment !== '')
+    ? Math.max(0, Math.round(Number(customInstallment)))
+    : defaultInstallment;
+
+  const schedule = [];
+  let monthIndex = 0;
+  let curY = startYear;
+  let curM = startMonth;
+
+  while (curY < endYear || (curY === endYear && curM <= endMonth)) {
+    monthIndex++;
+    const monthKey = `${curY}-${String(curM).padStart(2, '0')}`;
+    const rate = getApplicableInterestRate(monthKey);
+    const openingPrincipal = runningPrincipal;
+
+    // Total days in this current calendar month
+    const daysInMonth = new Date(curY, curM, 0).getDate();
+
+    // Determine start day and end day within this month
+    const isFirstMonth = (curY === startYear && curM === startMonth);
+    const isLastMonth = (curY === endYear && curM === endMonth);
+
+    let activeStartDay = 1;
+    let activeEndDay = daysInMonth;
+
+    if (isFirstMonth) {
+      activeStartDay = Math.min(Math.max(1, startDay), daysInMonth);
+    }
+    if (isLastMonth) {
+      activeEndDay = Math.min(Math.max(1, endDay), daysInMonth);
+    }
+
+    // Number of active days for interest calculation
+    // e.g. from 10th to 31st = (31 - 10 + 1) = 22 days
+    const activeDays = Math.max(0, activeEndDay - activeStartDay + 1);
+    const isFractionalMonth = (activeDays < daysInMonth);
+
+    // Determine installment deduction for this month
+    let principalDeduction = 0;
+    if (actualRepayments && Array.isArray(actualRepayments)) {
+      const match = actualRepayments.find(r => r.month === monthKey);
+      if (match) {
+        principalDeduction = Math.min(openingPrincipal, Math.max(0, Math.round(Number(match.principalPaid || 0))));
+      }
+    } else {
+      if (monthIndex > graceMonths && openingPrincipal > 0) {
+        principalDeduction = Math.min(openingPrincipal, monthlyDeduction);
+      }
+    }
+
+    // Monthly interest calculation:
+    // If full month: (Principal * Rate / 100) / 12
+    // If fraction month: ((Principal * Rate / 100) / 12) * (activeDays / daysInMonth)
+    let monthlyInterest = 0;
+    if (openingPrincipal > 0 && activeDays > 0) {
+      const fullMonthInterest = (openingPrincipal * (rate / 100)) / 12;
+      const exactInterest = isFractionalMonth
+        ? (fullMonthInterest * (activeDays / daysInMonth))
+        : fullMonthInterest;
+      monthlyInterest = Math.round(exactInterest);
+    }
+
+    const closingPrincipal = Math.max(0, openingPrincipal - principalDeduction);
+    runningPrincipal = closingPrincipal;
+    cumulativeInterest += monthlyInterest;
+    cumulativePrincipalPaid += principalDeduction;
+
+    let periodRemarks = 'পূর্ণ মাস';
+    if (isFractionalMonth) {
+      periodRemarks = `${activeStartDay} হতে ${activeEndDay} তারিখ (${activeDays}/${daysInMonth} দিন)`;
+    }
+
+    schedule.push({
+      monthIndex,
+      monthKey,
+      monthNameBn: formatBengaliMonth(monthKey),
+      isGracePeriod: monthIndex <= graceMonths,
+      rate,
+      daysInMonth,
+      activeDays,
+      activeStartDay,
+      activeEndDay,
+      isFractionalMonth,
+      periodRemarks,
+      openingPrincipal,
+      principalDeduction,
+      closingPrincipal,
+      monthlyInterest,
+      cumulativeInterest,
+      cumulativePrincipalPaid
+    });
+
+    curM++;
+    if (curM > 12) {
+      curM = 1;
+      curY++;
+    }
+  }
+
+  // Generate dynamic rate breakdown: count months and total interest for each rate applied
+  const rateBreakdownMap = {};
+  for (const s of schedule) {
+    const rKey = `${s.rate}%`;
+    if (!rateBreakdownMap[rKey]) {
+      rateBreakdownMap[rKey] = { rate: s.rate, months: 0, interest: 0 };
+    }
+    rateBreakdownMap[rKey].months += 1;
+    rateBreakdownMap[rKey].interest += s.monthlyInterest;
+  }
+  const rateBreakdown = Object.values(rateBreakdownMap).sort((a, b) => a.rate - b.rate);
+
+  return {
+    success: true,
+    totalPrincipal,
+    startDate: startDateStr,
+    endDate: endStr,
+    graceMonths,
+    monthlyDeduction,
+    totalMonths: schedule.length,
+    cumulativeInterest,
+    cumulativePrincipalPaid,
+    remainingPrincipal: runningPrincipal,
+    rateBreakdown,
+    schedule
+  };
+}
+
 module.exports = {
   CUTOFF_DATE,
   PRE_2020_RATE,
@@ -212,6 +423,7 @@ module.exports = {
   getPreviousMonth,
   isInterestProvisionApplicable,
   calculateMonthlyInterestProvision,
+  calculateLoanInterestSchedule,
   distributeRepayment,
   toBengaliDigits,
   formatBDT,
@@ -219,3 +431,4 @@ module.exports = {
   formatBengaliMonth,
   formatPeriodText
 };
+

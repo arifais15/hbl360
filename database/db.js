@@ -94,6 +94,19 @@ function initSchema() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Government & Custom Interest Rules (সরকারি বিধি ও তারিখভিত্তিক সুদের হার সেটিংস)
+    CREATE TABLE IF NOT EXISTS interest_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      effective_from_date DATE NOT NULL, -- e.g. '1970-01-01' or '2020-01-01'
+      effective_to_date DATE,            -- NULL means ongoing/current
+      rate REAL NOT NULL,                -- Annual simple interest rate e.g. 8.0, 7.0
+      rule_name TEXT NOT NULL,
+      description TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Directory of Other PBSs (অন্যান্য পল্লী বিদ্যুৎ সমিতিসমূহের তথ্য ও ব্যাংক হিসাব)
     CREATE TABLE IF NOT EXISTS other_pbs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,6 +151,7 @@ function initSchema() {
       password_hash TEXT NOT NULL,
       full_name TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('admin', 'accounts', 'employee')),
+      is_master_admin INTEGER NOT NULL DEFAULT 0,
       employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
       is_active INTEGER DEFAULT 1,
       is_deleted INTEGER DEFAULT 0,
@@ -342,6 +356,11 @@ function initSchema() {
     }
   }
 
+  const userColumns = db.prepare('PRAGMA table_info(users)').all();
+  if (!userColumns.some(column => column.name === 'is_master_admin')) {
+    db.exec('ALTER TABLE users ADD COLUMN is_master_admin INTEGER NOT NULL DEFAULT 0');
+  }
+
   db.exec(`
     UPDATE pbs_settings
     SET bank_name = replace(bank_name, 'লিঃ', 'পিএলসি')
@@ -364,6 +383,12 @@ function initSchema() {
   }
   if (!loanColumns.some(column => column.name === 'advance_balance')) {
     db.exec('ALTER TABLE loans ADD COLUMN advance_balance REAL NOT NULL DEFAULT 0.0');
+  }
+  if (!loanColumns.some(column => column.name === 'opening_principal_balance')) {
+    db.exec('ALTER TABLE loans ADD COLUMN opening_principal_balance REAL');
+  }
+  if (!loanColumns.some(column => column.name === 'opening_interest_balance')) {
+    db.exec('ALTER TABLE loans ADD COLUMN opening_interest_balance REAL');
   }
 
   const repaymentColumns = db.prepare('PRAGMA table_info(repayments)').all();
@@ -389,18 +414,43 @@ function initSchema() {
     `).run();
   }
 
-  // Pre-seed Admin and Accounts users
-  const adminUser = db.prepare('SELECT id FROM users WHERE username = ?').get('admin');
-  if (!adminUser) {
-    const salt = bcrypt.genSaltSync(10);
-    const adminHash = bcrypt.hashSync('admin123', salt);
-    const accountsHash = bcrypt.hashSync('accounts123', salt);
-
+  // Seed Default Government Interest Rules if table is empty
+  const rulesCount = db.prepare('SELECT COUNT(*) as count FROM interest_rules').get().count;
+  if (rulesCount === 0) {
     db.prepare(`
-      INSERT INTO users (username, password_hash, full_name, role)
-      VALUES ('admin', ?, 'প্রধান সিস্টেম অ্যাডমিনিস্ট্রেটর', 'admin')
-    `).run(adminHash);
+      INSERT INTO interest_rules (effective_from_date, effective_to_date, rate, rule_name, description, is_active)
+      VALUES
+        ('1970-01-01', '2019-12-31', 8.0, 'ডিসেম্বর/২০১৯ পর্যন্ত সরকারি বিধি', '৩১ ডিসেম্বর ২০১৯ পর্যন্ত বার্ষিক ৮% সরল সুদ', 1),
+        ('2020-01-01', NULL, 7.0, 'জানুয়ারি/২০২০ হতে বর্তমান বিধি', '০১ জানুয়ারি ২০২০ হতে চলমান বার্ষিক ৭% সরল সুদ', 1)
+    `).run();
+  }
 
+  const masterAdminPassword = process.env.MASTER_ADMIN_PASSWORD;
+  if (masterAdminPassword && masterAdminPassword.length < 8) {
+    throw new Error('MASTER_ADMIN_PASSWORD must be at least 8 characters long.');
+  }
+
+  const adminUser = db.prepare('SELECT id, role, is_master_admin FROM users WHERE username = ?').get('admin');
+  if (!adminUser && masterAdminPassword) {
+    const adminHash = bcrypt.hashSync(masterAdminPassword, bcrypt.genSaltSync(10));
+    db.prepare(`
+      INSERT INTO users (username, password_hash, full_name, role, is_master_admin)
+      VALUES ('admin', ?, 'প্রধান সিস্টেম অ্যাডমিনিস্ট্রেটর', 'admin', 1)
+    `).run(adminHash);
+  } else if (adminUser && !adminUser.is_master_admin && masterAdminPassword) {
+    if (adminUser.role !== 'admin') {
+      throw new Error('The existing "admin" user must have the admin role before master-admin provisioning.');
+    }
+    const adminHash = bcrypt.hashSync(masterAdminPassword, bcrypt.genSaltSync(10));
+    db.prepare('UPDATE users SET password_hash = ?, is_master_admin = 1 WHERE id = ?').run(adminHash, adminUser.id);
+  } else if (!adminUser || !adminUser.is_master_admin) {
+    console.warn('[Database] Master admin is not provisioned. Set MASTER_ADMIN_PASSWORD and restart the server.');
+  }
+
+  // Preserve existing Accounts credentials; seed them only when the user is absent.
+  const accountsUser = db.prepare('SELECT id FROM users WHERE username = ?').get('accounts');
+  if (!accountsUser) {
+    const accountsHash = bcrypt.hashSync('accounts123', bcrypt.genSaltSync(10));
     db.prepare(`
       INSERT INTO users (username, password_hash, full_name, role)
       VALUES ('accounts', ?, 'হিসাব শাখা (অর্থ ও হিসাব)', 'accounts')

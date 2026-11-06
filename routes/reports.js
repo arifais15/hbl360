@@ -4,6 +4,7 @@ const db = require('../database/db');
 const xlsx = require('xlsx');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { getFiscalYearComparativeStatement, getAvailableFiscalYears } = require('../services/fiscalYearService');
+const { calculateLoanInterestSchedule, formatBDT } = require('../services/loanCalculationService');
 
 function getControlLedgerRepaymentEvents(fromDate, toDate, employeeId, balanceType = 'principal') {
   let query = `
@@ -56,6 +57,31 @@ function getControlLedgerRepaymentEvents(fromDate, toDate, employeeId, balanceTy
       type: 'REPAYMENT'
     };
   });
+}
+
+function formatRepaymentDescription(r) {
+  let methodText = 'বেতন হতে কিস্তি আদায়';
+  if (r.repayment_method === 'BANK_DEPOSIT') {
+    methodText = 'ব্যাংক জমা / পে-অর্ডারে ঋণ পরিশোধ';
+  } else if (r.repayment_method === 'CASH') {
+    methodText = 'নগদ জমায় ঋণ পরিশোধ';
+  } else if (r.repayment_method === 'LUMPSUM_SETTLEMENT') {
+    methodText = 'এককালীন সম্পূর্ণ/বিশেষ ঋণ সমন্বয়';
+  } else if (r.repayment_method === 'INTER_PBS_COLLECTION') {
+    methodText = 'অন্য পবিস হতে কিস্তি কালেকশন জমা';
+  }
+
+  const base = r.deduction_month ? `${r.deduction_month} ${methodText}` : methodText;
+  return r.remarks ? `${base} (${r.remarks})` : base;
+}
+
+function formatRepaymentDefaultVoucher(r) {
+  if (r.voucher_no) return r.voucher_no;
+  if (r.repayment_method === 'BANK_DEPOSIT') return `BD-${r.deduction_month}`;
+  if (r.repayment_method === 'CASH') return `CR-${r.deduction_month}`;
+  if (r.repayment_method === 'LUMPSUM_SETTLEMENT') return `SETTLE-${r.deduction_month}`;
+  if (r.repayment_method === 'INTER_PBS_COLLECTION') return `CRJ-${r.deduction_date ? r.deduction_date.slice(5).replace('-', '/') : r.deduction_month}`;
+  return `SALARY-${r.deduction_month}`;
 }
 
 // 1. Own PBS Loans Ledger (নিজস্ব পিবিএসের ঋণের খতিয়ান)
@@ -133,7 +159,7 @@ router.get('/own-pbs-ledger', authenticateToken, (req, res) => {
 
       // Repayments (Credit Principal & Credit Interest)
       const repayments = db.prepare(`
-        SELECT deduction_date, deduction_month, voucher_no, total_amount, principal_paid, interest_paid
+        SELECT deduction_date, deduction_month, voucher_no, total_amount, principal_paid, interest_paid, repayment_method, remarks
         FROM repayments
         WHERE loan_id = ? AND is_deleted = 0
         ORDER BY deduction_date ASC
@@ -143,8 +169,9 @@ router.get('/own-pbs-ledger', authenticateToken, (req, res) => {
         ledgerEntries.push({
           date: r.deduction_date,
           type: 'REPAYMENT',
-          description: `${r.deduction_month} মাসের বেতন হতে কিস্তি আদায়`,
-          voucher: r.voucher_no || `SALARY-${r.deduction_month}`,
+          repaymentMethod: r.repayment_method || 'SALARY_DEDUCTION',
+          description: formatRepaymentDescription(r),
+          voucher: formatRepaymentDefaultVoucher(r),
           debitPrincipal: 0,
           creditPrincipal: r.principal_paid,
           debitInterest: 0,
@@ -159,12 +186,15 @@ router.get('/own-pbs-ledger', authenticateToken, (req, res) => {
 
       const priorPrincipalPaid = Math.max(0, (selectedLoan.total_principal_paid || 0) - recordedPrincipalPaid);
       const priorInterestAccrued = Math.max(0, (selectedLoan.interest_balance || 0) - (recordedInterestProvisioned - recordedInterestPaid));
+      const openingDate = selectedLoan.opening_balance_as_of || selectedLoan.disbursement_date;
 
       if (priorPrincipalPaid > 0) {
         ledgerEntries.push({
-          date: selectedLoan.disbursement_date,
+          date: openingDate,
           type: 'PRIOR_PRINCIPAL_PAID',
-          description: 'সফ্টওয়্যার অন্তর্ভুক্তির পূর্ববর্তী পুঞ্জীভূত আসল কিস্তি পরিশোধ',
+          description: priorPrincipalPaid >= selectedLoan.disbursed_amount
+            ? 'ম্যানুয়াল কাগজের লেজার হতে প্রারম্ভিক আসল সম্পূর্ণ পরিশোধ সমন্বয়'
+            : 'ম্যানুয়াল কাগজের লেজার হতে প্রারম্ভিক আসল কিস্তি পরিশোধ সমন্বয়',
           voucher: 'OPENING-PRIN',
           debitPrincipal: 0,
           creditPrincipal: priorPrincipalPaid,
@@ -175,9 +205,9 @@ router.get('/own-pbs-ledger', authenticateToken, (req, res) => {
 
       if (priorInterestAccrued > 0) {
         ledgerEntries.push({
-          date: selectedLoan.disbursement_date,
+          date: openingDate,
           type: 'PRIOR_INTEREST_ACCRUED',
-          description: 'সফ্টওয়্যার অন্তর্ভুক্তির পূর্ববর্তী পুঞ্জীভূত ধার্যকৃত সুদ স্থিতি',
+          description: 'ম্যানুয়াল কাগজের লেজার হতে পুঞ্জীভূত প্রারম্ভিক সুদ স্থিতি',
           voucher: 'OPENING-INT',
           debitPrincipal: 0,
           creditPrincipal: 0,
@@ -256,8 +286,15 @@ router.get('/employee-loan-ledger', authenticateToken, (req, res) => {
       return res.json({ success: true, employees: allEmployees, ledger: null });
     }
 
-    // Get selected employee info
-    const employee = db.prepare(`SELECT * FROM employees WHERE id = ? AND is_deleted = 0`).get(targetEmployeeId);
+    // Get selected employee info (or resolve from loanId if passed)
+    let employee = db.prepare(`SELECT * FROM employees WHERE id = ? AND is_deleted = 0`).get(targetEmployeeId);
+    if (!employee) {
+      const loanMatch = db.prepare(`SELECT employee_id FROM loans WHERE id = ? AND is_deleted = 0`).get(targetEmployeeId);
+      if (loanMatch) {
+        targetEmployeeId = loanMatch.employee_id;
+        employee = db.prepare(`SELECT * FROM employees WHERE id = ? AND is_deleted = 0`).get(targetEmployeeId);
+      }
+    }
     if (!employee) {
       return res.status(404).json({ success: false, message: 'কর্মচারী পাওয়া যায়নি।' });
     }
@@ -317,7 +354,7 @@ router.get('/employee-loan-ledger', authenticateToken, (req, res) => {
 
       // Repayments
       const repayments = db.prepare(`
-        SELECT deduction_date, deduction_month, voucher_no, total_amount, principal_paid, interest_paid
+        SELECT deduction_date, deduction_month, voucher_no, total_amount, principal_paid, interest_paid, repayment_method, remarks
         FROM repayments WHERE loan_id = ? AND is_deleted = 0
         ORDER BY deduction_date ASC
       `).all(loan.id);
@@ -326,8 +363,9 @@ router.get('/employee-loan-ledger', authenticateToken, (req, res) => {
         entries.push({
           date: r.deduction_date,
           type: 'REPAYMENT',
-          description: `${r.deduction_month} মাসের বেতন হতে কিস্তি আদায়`,
-          voucher: r.voucher_no || `SALARY-${r.deduction_month}`,
+          repaymentMethod: r.repayment_method || 'SALARY_DEDUCTION',
+          description: formatRepaymentDescription(r),
+          voucher: formatRepaymentDefaultVoucher(r),
           debitPrincipal: 0,
           creditPrincipal: r.principal_paid,
           debitInterest: 0,
@@ -345,12 +383,15 @@ router.get('/employee-loan-ledger', authenticateToken, (req, res) => {
 
       const priorPrincipalPaid = Math.max(0, (loan.total_principal_paid || 0) - recordedPrincipalPaid);
       const priorInterestAccrued = Math.max(0, (loan.interest_balance || 0) - (recordedInterestProvisioned - recordedInterestPaid));
+      const openingDate = loan.opening_balance_as_of || loan.disbursement_date;
 
       if (priorPrincipalPaid > 0) {
         entries.push({
-          date: loan.disbursement_date,
+          date: openingDate,
           type: 'PRIOR_PRINCIPAL_PAID',
-          description: 'সফ্টওয়্যার অন্তর্ভুক্তির পূর্ববর্তী পুঞ্জীভূত আসল কিস্তি পরিশোধ',
+          description: priorPrincipalPaid >= loan.disbursed_amount
+            ? 'ম্যানুয়াল কাগজের লেজার হতে প্রারম্ভিক আসল সম্পূর্ণ পরিশোধ সমন্বয়'
+            : 'ম্যানুয়াল কাগজের লেজার হতে প্রারম্ভিক আসল কিস্তি পরিশোধ সমন্বয়',
           voucher: 'OPENING-PRIN',
           debitPrincipal: 0,
           creditPrincipal: priorPrincipalPaid,
@@ -361,9 +402,9 @@ router.get('/employee-loan-ledger', authenticateToken, (req, res) => {
 
       if (priorInterestAccrued > 0) {
         entries.push({
-          date: loan.disbursement_date,
+          date: openingDate,
           type: 'PRIOR_INTEREST_ACCRUED',
-          description: 'সফ্টওয়্যার অন্তর্ভুক্তির পূর্ববর্তী পুঞ্জীভূত ধার্যকৃত সুদ স্থিতি',
+          description: 'ম্যানুয়াল কাগজের লেজার হতে পুঞ্জীভূত প্রারম্ভিক সুদ স্থিতি',
           voucher: 'OPENING-INT',
           debitPrincipal: 0,
           creditPrincipal: 0,
@@ -615,13 +656,258 @@ router.get('/audit-logs', authenticateToken, requireRole(['admin', 'accounts']),
   }
 });
 
-// 5. Excel Export for Comparative Statement & Ledgers
+// 4.5 Interest Calculation Report for Legacy / Cutover Loans
+router.get('/interest-calculation-report', authenticateToken, (req, res) => {
+  try {
+    const { loanId, fromDate, toDate, graceMonths, installmentCount, customInstallment } = req.query;
+
+    if (!loanId) {
+      return res.status(400).json({ success: false, message: 'ঋণ (Loan) নির্বাচন আবশ্যক।' });
+    }
+
+    const loan = db.prepare(`
+      SELECT l.*, e.emp_code, e.name as emp_name, e.designation, e.department
+      FROM loans l
+      JOIN employees e ON l.employee_id = e.id
+      WHERE l.id = ? AND l.is_deleted = 0
+    `).get(loanId);
+
+    if (!loan) {
+      return res.status(404).json({ success: false, message: 'নির্দিষ্ট ঋণটি পাওয়া যায়নি।' });
+    }
+
+    // Default dates
+    const effectiveFromDate = fromDate || loan.disbursement_date || loan.sanction_date;
+    const effectiveToDate = toDate || loan.opening_balance_as_of || new Date().toISOString().slice(0, 10);
+    const parsedGrace = (graceMonths !== undefined && graceMonths !== '') ? parseInt(graceMonths, 10) : 12;
+    const parsedCount = (installmentCount !== undefined && installmentCount !== '') ? parseInt(installmentCount, 10) : 120;
+    const parsedInstallment = (customInstallment !== undefined && customInstallment !== '') ? parseFloat(customInstallment) : null;
+
+    const calcResult = calculateLoanInterestSchedule({
+      loanId: loan.id,
+      disbursedAmount: loan.disbursed_amount || loan.sanction_amount,
+      disbursementDate: loan.disbursement_date,
+      sanctionDate: loan.sanction_date,
+      fromDate: effectiveFromDate,
+      toDate: effectiveToDate,
+      graceMonths: isNaN(parsedGrace) ? 12 : parsedGrace,
+      installmentCount: isNaN(parsedCount) ? 120 : parsedCount,
+      customInstallment: parsedInstallment
+    });
+
+    const activeRules = db.prepare(`
+      SELECT * FROM interest_rules
+      WHERE is_active = 1
+      ORDER BY effective_from_date ASC
+    `).all();
+
+    res.json({
+      success: true,
+      loan,
+      params: {
+        fromDate: effectiveFromDate,
+        toDate: effectiveToDate,
+        graceMonths: isNaN(parsedGrace) ? 12 : parsedGrace,
+        installmentCount: isNaN(parsedCount) ? 120 : parsedCount,
+        monthlyDeduction: calcResult.monthlyDeduction
+      },
+      calculation: calcResult,
+      activeRules
+    });
+  } catch (err) {
+    console.error('Interest calculation report error:', err);
+    res.status(500).json({ success: false, message: 'সুদ হিসাব প্রতিবেদন প্রস্তুত করতে সমস্যা হয়েছে।' });
+  }
+});
+
+
+// 5. Excel Export for Comparative Statement, Ledgers, & Full Database
 router.get('/export/excel', authenticateToken, (req, res) => {
   try {
-    const { reportType } = req.query; // 'comparative' or 'own_ledger' or 'other_ledger'
+    const { reportType } = req.query; // 'comparative' or 'own_ledger' or 'other_ledger' or 'full_database'
     const wb = xlsx.utils.book_new();
 
-    if (reportType === 'comparative') {
+    if (reportType === 'full_database') {
+      // 1. Employees Sheet
+      const empRows = db.prepare(`
+        SELECT emp_code AS 'পে আইডি',
+               name AS 'নাম',
+               designation AS 'পদবী',
+               department AS 'বিভাগ',
+               mobile AS 'মোবাইল',
+               email AS 'ইমেইল',
+               joining_date AS 'যোগদানের তারিখ',
+               current_posting_pbs AS 'বর্তমান পদায়ন পবিস',
+               CASE WHEN is_active = 1 THEN 'সক্রিয়' ELSE 'নিষ্ক্রিয়' END AS 'অবস্থা'
+        FROM employees
+        WHERE is_deleted = 0
+        ORDER BY CAST(emp_code AS INTEGER) ASC, emp_code ASC
+      `).all();
+      const wsEmp = xlsx.utils.json_to_sheet(empRows);
+      xlsx.utils.book_append_sheet(wb, wsEmp, 'কর্মকর্তা-কর্মচারী তালিকা');
+
+      // 2. Loans Sheet
+      const loanRows = db.prepare(`
+        SELECT l.loan_no AS 'ঋণ নং',
+               e.emp_code AS 'পে আইডি',
+               e.name AS 'কর্মচারীর নাম',
+               e.designation AS 'পদবী',
+               l.loan_lot_name AS 'ঋণ লট/বরাদ্দ',
+               CASE WHEN l.loan_source_type = 'OWN_PBS' THEN 'নিজস্ব পবিস' ELSE 'অন্য পবিস' END AS 'ঋণের ধরন',
+               l.origin_pbs_name AS 'উৎস পবিস',
+               l.sanction_no AS 'মঞ্জুরি নং',
+               l.sanction_date AS 'মঞ্জুরি তারিখ',
+               l.disbursement_date AS 'বিতরণ তারিখ',
+               l.disbursed_amount AS 'বিতরণকৃত আসল ঋণ',
+               l.monthly_installment AS 'মাসিক কিস্তি',
+               l.interest_rate AS 'সুদের হার (%)',
+               l.principal_balance AS 'অবশিষ্ট আসল স্থিতি',
+               l.interest_balance AS 'অবশিষ্ট সুদ স্থিতি',
+               (l.principal_balance + l.interest_balance) AS 'সর্বমোট স্থিতি',
+               l.total_principal_paid AS 'মোট পরিশোধিত আসল',
+               l.total_interest_paid AS 'মোট পরিশোধিত সুদ',
+               CASE WHEN l.status = 'ACTIVE' THEN 'চলমান (Active)' ELSE 'পরিশোধিত (Closed)' END AS 'ঋণের অবস্থা',
+               l.remarks AS 'মন্তব্য'
+        FROM loans l
+        JOIN employees e ON l.employee_id = e.id
+        WHERE l.is_deleted = 0 AND e.is_deleted = 0
+        ORDER BY l.disbursement_date DESC, l.id DESC
+      `).all();
+      const wsLoans = xlsx.utils.json_to_sheet(loanRows);
+      xlsx.utils.book_append_sheet(wb, wsLoans, 'গৃহ ঋণ তালিকা');
+
+      // 3. Deductions / Repayments Sheet
+      const repRows = db.prepare(`
+        SELECT r.deduction_month AS 'কর্তনের মাস',
+               r.deduction_date AS 'কর্তন তারিখ',
+               e.emp_code AS 'পে আইডি',
+               e.name AS 'কর্মচারীর নাম',
+               l.loan_no AS 'ঋণ নং',
+               CASE WHEN l.loan_source_type = 'OWN_PBS' THEN 'নিজস্ব পবিস' ELSE 'অন্য পবিস' END AS 'ঋণের উৎস ধরন',
+               l.origin_pbs_name AS 'উৎস পবিস',
+               r.voucher_no AS 'ভাউচার নং',
+               r.total_amount AS 'মোট কিস্তি আদায়',
+               r.principal_paid AS 'আসল আদায়',
+               r.interest_paid AS 'সুদ আদায়',
+               r.new_principal_balance AS 'পরবর্তী আসল স্থিতি',
+               r.new_interest_balance AS 'পরবর্তী সুদ স্থিতি',
+               CASE
+                 WHEN r.repayment_method = 'BANK_DEPOSIT' THEN 'ব্যাংক জমা / পে-অর্ডার'
+                 WHEN r.repayment_method = 'CASH' THEN 'নগদ জমা'
+                 WHEN r.repayment_method = 'LUMPSUM_SETTLEMENT' THEN 'এককালীন সম্পূর্ণ সমন্বয়'
+                 WHEN r.repayment_method = 'INTER_PBS_COLLECTION' THEN 'অন্য পবিস কালেকশন'
+                 ELSE 'বেতন কর্তন'
+               END AS 'পরিশোধের মাধ্যম',
+               r.remittance_status AS 'রেমিট্যান্স অবস্থা'
+        FROM repayments r
+        JOIN loans l ON r.loan_id = l.id
+        JOIN employees e ON r.employee_id = e.id
+        WHERE r.is_deleted = 0
+        ORDER BY r.deduction_date DESC, r.id DESC
+      `).all();
+      const wsRep = xlsx.utils.json_to_sheet(repRows);
+      xlsx.utils.book_append_sheet(wb, wsRep, 'মাসিক কিস্তি কর্তন');
+
+      // 4. Interest Provisions Sheet
+      const provRows = db.prepare(`
+        SELECT p.provision_month AS 'প্রভিশনের মাস',
+               p.provision_date AS 'পোস্টিং তারিখ',
+               e.emp_code AS 'পে আইডি',
+               e.name AS 'কর্মচারীর নাম',
+               l.loan_no AS 'ঋণ নং',
+               p.applied_rate AS 'সুদের হার (%)',
+               p.principal_amount_on_date AS 'আসল স্থিতি (যার ওপর ধার্য)',
+               p.interest_amount AS 'ধার্যকৃত সুদ',
+               p.new_interest_balance AS 'নতুন সুদ স্থিতি'
+        FROM interest_provisions p
+        JOIN loans l ON p.loan_id = l.id
+        JOIN employees e ON p.employee_id = e.id
+        WHERE p.is_deleted = 0
+        ORDER BY p.provision_month DESC, p.id DESC
+      `).all();
+      const wsProv = xlsx.utils.json_to_sheet(provRows);
+      xlsx.utils.book_append_sheet(wb, wsProv, 'মাসিক সুদ প্রভিশন');
+
+      // 5. Bank Advices Sheet
+      const adviceRows = db.prepare(`
+        SELECT advice_no AS 'অ্যাডভাইস নং',
+               memo_no AS 'স্মারক নং',
+               advice_date AS 'অ্যাডভাইস তারিখ',
+               target_pbs_name AS 'প্রাপক পবিসের নাম',
+               target_bank_name AS 'প্রাপক ব্যাংক',
+               target_bank_branch AS 'শাখা',
+               target_account_no AS 'হিসাব নম্বর',
+               target_routing_no AS 'রাউটিং নং',
+               total_amount AS 'মোট অর্থ',
+               employee_count AS 'কর্মচারী সংখ্যা',
+               period_text AS 'কিস্তির সময়কাল',
+               status AS 'অবস্থা'
+        FROM bank_advices
+        WHERE is_deleted = 0
+        ORDER BY advice_date DESC, id DESC
+      `).all();
+      const wsAdv = xlsx.utils.json_to_sheet(adviceRows);
+      xlsx.utils.book_append_sheet(wb, wsAdv, 'ব্যাংক অ্যাডভাইস');
+
+      // 6. Demand Letters Sheet
+      const letterRows = db.prepare(`
+        SELECT letter_no AS 'চিঠি নং',
+               memo_no AS 'স্মারক নং',
+               letter_date AS 'চিঠির তারিখ',
+               target_pbs_name AS 'বদলিকৃত পবিস',
+               emp_code AS 'পে আইডি',
+               employee_name AS 'কর্মচারীর নাম',
+               designation AS 'পদবী',
+               loan_no AS 'ঋণ নং',
+               monthly_installment AS 'মাসিক কিস্তি',
+               due_months_count AS 'বকেয়া মাসের সংখ্যা',
+               total_due_amount AS 'মোট বকেয়া দাবি',
+               principal_balance AS 'অবশিষ্ট আসল',
+               interest_balance AS 'অবশিষ্ট সুদ',
+               status AS 'অবস্থা'
+        FROM demand_letters
+        WHERE is_deleted = 0
+        ORDER BY letter_date DESC, id DESC
+      `).all();
+      const wsLet = xlsx.utils.json_to_sheet(letterRows);
+      xlsx.utils.book_append_sheet(wb, wsLet, 'তাগাদা পত্র');
+
+      // 7. Other PBS Directory Sheet
+      const otherPbsRows = db.prepare(`
+        SELECT pbs_name AS 'পবিসের নাম',
+               short_name AS 'সংক্ষিপ্ত কোড',
+               bank_name AS 'ব্যাংকের নাম',
+               bank_branch AS 'শাখা',
+               account_no AS 'হিসাব নম্বর',
+               routing_no AS 'রাউটিং নম্বর',
+               contact_person AS 'যোগাযোগের ব্যক্তি',
+               phone AS 'ফোন'
+        FROM other_pbs
+        WHERE is_deleted = 0
+        ORDER BY pbs_name ASC
+      `).all();
+      const wsPbs = xlsx.utils.json_to_sheet(otherPbsRows);
+      xlsx.utils.book_append_sheet(wb, wsPbs, '৮০টি পবিস ব্যাংক তথ্য');
+
+      // 8. PBS Settings Sheet
+      const settings = db.prepare('SELECT * FROM pbs_settings WHERE id = 1').get();
+      if (settings) {
+        const settingsRows = [
+          { 'বিবরণ': 'নিজস্ব পবিসের নাম', 'তথ্য': settings.pbs_name || '' },
+          { 'বিবরণ': 'পবিস কোড', 'তথ্য': settings.pbs_code || '' },
+          { 'বিবরণ': 'ঠিকানা', 'তথ্য': settings.address || '' },
+          { 'বিবরণ': 'ব্যাংকের নাম ও শাখা', 'তথ্য': `${settings.bank_name || ''}, ${settings.bank_branch || ''}` },
+          { 'বিবরণ': 'ব্যাংক হিসাব নম্বর', 'তথ্য': settings.account_no || '' },
+          { 'বিবরণ': 'রাউটিং নম্বর', 'তথ্য': settings.routing_no || '' },
+          { 'বিবরণ': 'এজিএম (অর্থ-হিসাব)', 'তথ্য': settings.agm_finance_name || '' },
+          { 'বিবরণ': 'জেনারেল ম্যানেজার', 'তথ্য': settings.gm_name || '' },
+          { 'বিবরণ': 'স্মারক নং প্রিফিক্স', 'তথ্য': settings.memo_no_prefix || '' }
+        ];
+        const wsSet = xlsx.utils.json_to_sheet(settingsRows);
+        xlsx.utils.book_append_sheet(wb, wsSet, 'পবিস সাধারণ তথ্য');
+      }
+
+    } else if (reportType === 'comparative') {
       const availableYears = getAvailableFiscalYears().slice(0, 4);
       const statement = getFiscalYearComparativeStatement(availableYears);
 
@@ -1015,6 +1301,70 @@ router.get('/export/excel', authenticateToken, (req, res) => {
 
       const ws = xlsx.utils.json_to_sheet(exportRows);
       xlsx.utils.book_append_sheet(wb, ws, 'House_Loan_Ledger_242.50');
+    } else if (reportType === 'interest_calculation_report') {
+      const { loanId, fromDate, toDate, graceMonths, installmentCount, customInstallment } = req.query;
+      const loan = db.prepare(`
+        SELECT l.*, e.emp_code, e.name as emp_name, e.designation, e.department
+        FROM loans l
+        JOIN employees e ON l.employee_id = e.id
+        WHERE l.id = ? AND l.is_deleted = 0
+      `).get(loanId);
+
+      if (!loan) {
+        return res.status(404).json({ success: false, message: 'ঋণ পাওয়া যায়নি।' });
+      }
+
+      const effectiveFromDate = fromDate || loan.disbursement_date || loan.sanction_date;
+      const effectiveToDate = toDate || loan.opening_balance_as_of || new Date().toISOString().slice(0, 10);
+      const parsedGrace = (graceMonths !== undefined && graceMonths !== '') ? parseInt(graceMonths, 10) : 12;
+      const parsedCount = (installmentCount !== undefined && installmentCount !== '') ? parseInt(installmentCount, 10) : 120;
+      const parsedInstallment = (customInstallment !== undefined && customInstallment !== '') ? parseFloat(customInstallment) : null;
+
+      const calcResult = calculateLoanInterestSchedule({
+        loanId: loan.id,
+        disbursedAmount: loan.disbursed_amount || loan.sanction_amount,
+        disbursementDate: loan.disbursement_date,
+        sanctionDate: loan.sanction_date,
+        fromDate: effectiveFromDate,
+        toDate: effectiveToDate,
+        graceMonths: isNaN(parsedGrace) ? 12 : parsedGrace,
+        installmentCount: isNaN(parsedCount) ? 120 : parsedCount,
+        customInstallment: parsedInstallment
+      });
+
+      const exportRows = (calcResult.schedule || []).map(row => ({
+        'ক্রমিক': row.monthIndex,
+        'মাস': row.monthNameBn || row.monthKey,
+        'মাস কোড': row.monthKey,
+        'হিসাবকাল / ফ্রাকশন দিন': row.periodRemarks || 'পূর্ণ মাস',
+        'সক্রিয় দিন': row.activeDays,
+        'গ্রেস পিরিয়ড': row.isGracePeriod ? 'হ্যাঁ (গ্রেস)' : 'না',
+        'সুদের হার (%)': `${row.rate}%`,
+        'প্রারম্ভিক আসল (টাকা)': row.openingPrincipal,
+        'মাসিক আসল কর্তন (টাকা)': row.principalDeduction,
+        'সমাপনী আসল (টাকা)': row.closingPrincipal,
+        'মাসিক ধার্যকৃত সুদ (টাকা)': row.monthlyInterest,
+        'পুঞ্জীভূত মোট সুদ (টাকা)': row.cumulativeInterest,
+        'পুঞ্জীভূত পরিশোধিত আসল (টাকা)': row.cumulativePrincipalPaid
+      }));
+
+      // Summary Total Row
+      exportRows.push({
+        'ক্রমিক': '',
+        'মাস': 'সর্বমোট',
+        'মাস কোড': `${calcResult.totalMonths} মাস`,
+        'গ্রেস পিরিয়ড': '',
+        'সুদের হার (%)': '',
+        'প্রারম্ভিক আসল (টাকা)': '',
+        'মাসিক আসল কর্তন (টাকা)': calcResult.cumulativePrincipalPaid,
+        'সমাপনী আসল (টাকা)': calcResult.remainingPrincipal,
+        'মাসিক ধার্যকৃত সুদ (টাকা)': calcResult.cumulativeInterest,
+        'পুঞ্জীভূত মোট সুদ (টাকা)': calcResult.cumulativeInterest,
+        'পুঞ্জীভূত পরিশোধিত আসল (টাকা)': calcResult.cumulativePrincipalPaid
+      });
+
+      const ws = xlsx.utils.json_to_sheet(exportRows);
+      xlsx.utils.book_append_sheet(wb, ws, 'Interest_Calculation');
     }
 
     const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });

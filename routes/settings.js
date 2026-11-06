@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const db = require('../database/db');
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const { authenticateToken, requireRole, requireMasterAdmin } = require('../middleware/auth');
 const { logAudit } = require('../middleware/audit');
 
 const logoUpload = multer({
@@ -40,11 +40,15 @@ router.get('/', authenticateToken, (req, res) => {
   try {
     const pbsSettings = db.prepare('SELECT * FROM pbs_settings WHERE id = 1').get();
     const otherPbsList = db.prepare('SELECT * FROM other_pbs WHERE is_deleted = 0 ORDER BY pbs_name ASC').all();
+    const interestRules = db.prepare('SELECT * FROM interest_rules ORDER BY effective_from_date ASC').all();
 
     res.json({
       success: true,
       pbsSettings,
-      otherPbsList
+      otherPbsList,
+      interestRules,
+      dbPath: db.dbPath || path.resolve('database/pbs_house_loan.db'),
+      dataDir: db.dataDir || path.resolve('.')
     });
   } catch (error) {
     console.error('Settings error:', error);
@@ -55,7 +59,7 @@ router.get('/', authenticateToken, (req, res) => {
 // Update Own PBS Settings
 router.put('/', authenticateToken, requireRole(['admin', 'accounts']), (req, res) => {
   try {
-    const allowedFields = [
+    const masterAdminFields = [
       'pbs_name', 'pbs_code', 'address', 'phone', 'email',
       'bank_name', 'bank_branch', 'account_no', 'routing_no',
       'bank_advice_prepared_by_name', 'bank_advice_verified_by_name',
@@ -63,6 +67,27 @@ router.put('/', authenticateToken, requireRole(['admin', 'accounts']), (req, res
       'pbs_english_name', 'letterhead_subtitle', 'letterhead_right_title',
       'letterhead_badge_text', 'website', 'memo_no_prefix'
     ];
+    const userEditableFields = [
+      'bank_name', 'bank_branch', 'account_no', 'routing_no',
+      'bank_advice_prepared_by_name', 'bank_advice_verified_by_name',
+      'agm_finance_name', 'gm_name'
+    ];
+    const masterStatus = db.prepare(`
+      SELECT is_master_admin
+      FROM users
+      WHERE id = ? AND is_active = 1 AND is_deleted = 0
+    `).get(req.user.id);
+    const isMasterAdmin = Boolean(masterStatus?.is_master_admin);
+    const allowedFields = isMasterAdmin ? masterAdminFields : userEditableFields;
+    const rejectedFields = Object.keys(req.body).filter(field => !allowedFields.includes(field));
+
+    if (rejectedFields.length > 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'এই তথ্য পরিবর্তনের জন্য মাস্টার অ্যাডমিন অনুমতি প্রয়োজন।'
+      });
+    }
+
     const updates = allowedFields
       .filter(field => Object.prototype.hasOwnProperty.call(req.body, field))
       .map(field => [
@@ -103,7 +128,7 @@ router.put('/', authenticateToken, requireRole(['admin', 'accounts']), (req, res
   }
 });
 
-router.post('/letterhead-logo', authenticateToken, requireRole(['admin', 'accounts']), uploadLetterheadLogo, (req, res) => {
+router.post('/letterhead-logo', authenticateToken, requireMasterAdmin, uploadLetterheadLogo, (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'লোগো ফাইল নির্বাচন করুন।' });
@@ -216,4 +241,101 @@ router.delete('/other-pbs/:id', authenticateToken, requireRole(['admin', 'accoun
   }
 });
 
+// ----------------- INTEREST RULES CRUD -----------------
+router.get('/interest-rules', authenticateToken, (req, res) => {
+  try {
+    const rules = db.prepare('SELECT * FROM interest_rules ORDER BY effective_from_date ASC').all();
+    res.json({ success: true, rules });
+  } catch (err) {
+    console.error('Fetch interest rules error:', err);
+    res.status(500).json({ success: false, message: 'সুদের হারের তালিকা আনা যায়নি।' });
+  }
+});
+
+router.post('/interest-rules', authenticateToken, requireRole(['admin', 'accounts']), (req, res) => {
+  try {
+    const { effective_from_date, effective_to_date, rate, rule_name, description } = req.body;
+    if (!effective_from_date || rate === undefined || rate === '' || !rule_name) {
+      return res.status(400).json({ success: false, message: 'কার্যকর শুরুর তারিখ, সুদের হার ও বিধির নাম আবশ্যক।' });
+    }
+
+    const parsedRate = parseFloat(rate);
+    if (isNaN(parsedRate) || parsedRate < 0) {
+      return res.status(400).json({ success: false, message: 'সঠিক সুদের হার প্রদান করুন।' });
+    }
+
+    const cleanToDate = (effective_to_date && effective_to_date.trim()) ? effective_to_date.trim() : null;
+
+    const result = db.prepare(`
+      INSERT INTO interest_rules (effective_from_date, effective_to_date, rate, rule_name, description, is_active)
+      VALUES (?, ?, ?, ?, ?, 1)
+    `).run(effective_from_date.trim(), cleanToDate, parsedRate, rule_name.trim(), description ? description.trim() : '');
+
+    logAudit(req, 'CREATE', 'SETTINGS', result.lastInsertRowid, `নতুন সুদের হার বিধি যুক্ত: ${rule_name} (${parsedRate}%)`);
+    res.json({ success: true, message: 'সুদের হার বিধি সফলভাবে সংরক্ষিত হয়েছে।' });
+  } catch (err) {
+    console.error('Add interest rule error:', err);
+    res.status(500).json({ success: false, message: 'সুদের হার সংরক্ষণ ব্যর্থ হয়েছে।' });
+  }
+});
+
+router.put('/interest-rules/:id', authenticateToken, requireRole(['admin', 'accounts']), (req, res) => {
+  try {
+    const { id } = req.params;
+    const { effective_from_date, effective_to_date, rate, rule_name, description, is_active } = req.body;
+
+    const existing = db.prepare('SELECT * FROM interest_rules WHERE id = ?').get(id);
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'সুদের হারের রেকর্ড পাওয়া যায়নি।' });
+    }
+
+    const parsedRate = parseFloat(rate);
+    const cleanToDate = (effective_to_date && effective_to_date.trim()) ? effective_to_date.trim() : null;
+
+    db.prepare(`
+      UPDATE interest_rules
+      SET effective_from_date = ?,
+          effective_to_date = ?,
+          rate = ?,
+          rule_name = ?,
+          description = ?,
+          is_active = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      effective_from_date.trim(),
+      cleanToDate,
+      isNaN(parsedRate) ? existing.rate : parsedRate,
+      rule_name.trim(),
+      description !== undefined ? description.trim() : existing.description,
+      is_active !== undefined ? (is_active ? 1 : 0) : existing.is_active,
+      id
+    );
+
+    logAudit(req, 'UPDATE', 'SETTINGS', id, `সুদের হার বিধি আপডেট: ${rule_name} (${parsedRate}%)`);
+    res.json({ success: true, message: 'সুদের হার সফলভাবে হালনাগাদ করা হয়েছে।' });
+  } catch (err) {
+    console.error('Update interest rule error:', err);
+    res.status(500).json({ success: false, message: 'সুদের হার আপডেট ব্যর্থ হয়েছে।' });
+  }
+});
+
+router.delete('/interest-rules/:id', authenticateToken, requireRole(['admin', 'accounts']), (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = db.prepare('SELECT * FROM interest_rules WHERE id = ?').get(id);
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'সুদের হার পাওয়া যায়নি।' });
+    }
+
+    db.prepare('DELETE FROM interest_rules WHERE id = ?').run(id);
+    logAudit(req, 'DELETE', 'SETTINGS', id, `সুদের হার বিধি মুছে ফেলা হয়েছে: ${existing.rule_name}`);
+    res.json({ success: true, message: 'সুদের হার বিধি মুছে ফেলা হয়েছে।' });
+  } catch (err) {
+    console.error('Delete interest rule error:', err);
+    res.status(500).json({ success: false, message: 'মুছে ফেলা সম্ভব হয়নি।' });
+  }
+});
+
 module.exports = router;
+

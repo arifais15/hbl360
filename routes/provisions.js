@@ -113,13 +113,26 @@ router.get('/preview', authenticateToken, requireRole(['admin', 'accounts']), (r
     `).all(month);
 
     const applicableRate = getApplicableInterestRate(month);
+    const py = parseInt(month.slice(0, 4), 10);
+    const pm = parseInt(month.slice(5, 7), 10);
+    const daysInMonth = new Date(py, pm, 0).getDate();
+
     const previewList = eligibleLoans.map(loan => {
       let rate = applicableRate;
       if (loan.custom_interest_rate !== null && loan.custom_interest_rate !== undefined && loan.custom_interest_rate !== '') {
         rate = parseFloat(loan.custom_interest_rate);
       }
       const principalOnDate = getPreviousMonthEndingPrincipalBalance(loan, month);
-      const calculatedInterest = calculateMonthlyInterestProvision(principalOnDate, rate);
+
+      const disbDate = loan.disbursement_date || '';
+      const isDisbMonth = (disbDate.slice(0, 7) === month);
+      let activeDays = daysInMonth;
+      if (isDisbMonth && disbDate.length >= 10) {
+        const startDay = parseInt(disbDate.slice(8, 10), 10) || 1;
+        activeDays = Math.max(0, daysInMonth - startDay + 1);
+      }
+
+      const calculatedInterest = calculateMonthlyInterestProvision(principalOnDate, rate, activeDays, daysInMonth);
       return {
         loan_id: loan.id,
         loan_no: loan.loan_no,
@@ -131,6 +144,9 @@ router.get('/preview', authenticateToken, requireRole(['admin', 'accounts']), (r
         interest_rate: rate,
         rate_rule: month < '2020-01' ? '২০১৯ ডিসে পর্যন্ত (৮% সরল সুদ)' : '২০২০ জানু থেকে (৭% সরল সুদ)',
         current_principal: principalOnDate,
+        active_days: activeDays,
+        days_in_month: daysInMonth,
+        is_fractional: activeDays < daysInMonth,
         calculated_monthly_interest: calculatedInterest,
         current_interest_balance: loan.interest_balance,
         new_interest_balance: loan.interest_balance + calculatedInterest
@@ -202,13 +218,35 @@ router.post('/run-monthly', authenticateToken, requireRole(['admin', 'accounts']
     let totalInterest = 0;
 
     const applicableRate = getApplicableInterestRate(provision_month);
+    const ry = parseInt(provision_month.slice(0, 4), 10);
+    const rm = parseInt(provision_month.slice(5, 7), 10);
+    const daysInMonth = new Date(ry, rm, 0).getDate();
+
     for (const loan of eligibleLoans) {
       let rate = applicableRate;
       if (loan.custom_interest_rate !== null && loan.custom_interest_rate !== undefined && loan.custom_interest_rate !== '') {
         rate = parseFloat(loan.custom_interest_rate);
       }
       const principalOnDate = getPreviousMonthEndingPrincipalBalance(loan, provision_month);
-      const interestAmt = calculateMonthlyInterestProvision(principalOnDate, rate);
+
+      const disbDate = loan.disbursement_date || '';
+      const isDisbMonth = (disbDate.slice(0, 7) === provision_month);
+      let activeDays = daysInMonth;
+      if (isDisbMonth && disbDate.length >= 10) {
+        const startDay = parseInt(disbDate.slice(8, 10), 10) || 1;
+        activeDays = Math.max(0, daysInMonth - startDay + 1);
+      }
+
+      // If provision date is before month end
+      if (effectiveProvisionDate && effectiveProvisionDate.slice(0, 7) === provision_month && effectiveProvisionDate.length >= 10) {
+        const provDay = parseInt(effectiveProvisionDate.slice(8, 10), 10) || daysInMonth;
+        if (provDay < daysInMonth) {
+          const startDay = isDisbMonth ? (parseInt(disbDate.slice(8, 10), 10) || 1) : 1;
+          activeDays = Math.max(0, provDay - startDay + 1);
+        }
+      }
+
+      const interestAmt = calculateMonthlyInterestProvision(principalOnDate, rate, activeDays, daysInMonth);
 
       if (interestAmt > 0) {
         insertProvision.run(

@@ -13,7 +13,8 @@ const state = {
   loans: [],
   activeLoanFilter: '',
   selectedDocumentAdvice: null,
-  currentDocView: 'letter' // 'letter' or 'advice'
+  currentDocView: 'letter', // 'letter' or 'advice'
+  activeDeductionsSubtab: 'current_month_status'
 };
 
 async function confirmWithSweetAlert(text, options = {}) {
@@ -195,6 +196,30 @@ function toBengaliCalendarDate(dateStr) {
   return `${toBn(bnDay)} ${bnMonth} ${toBn(bnYear)} বঙ্গাব্দ`;
 }
 
+function formatOfficeNoteDate(dateStr, style = 'bangla_english') {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  const day = d.getDate();
+  const year = d.getFullYear();
+  const enMonthNamesBn = [
+    'জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন',
+    'জুলাই', 'আগস্ট', 'সেপ্টেম্বর', 'অক্টোবর', 'নভেম্বর', 'ডিসেম্বর'
+  ];
+  const enMonthName = enMonthNamesBn[d.getMonth()];
+  const engDateFormatted = `${toBn(day)} ${enMonthName} ${toBn(year)} খ্রি:`;
+  const bnCalDate = toBengaliCalendarDate(dateStr);
+
+  if (style === 'bangla_english') {
+    // Standard dual date: বাংলা সন (উপরে) ও ইংরেজি খ্রিস্টাব্দ (নিচে / ব্র্যাকেটে)
+    return `<span style="display:inline-block;text-align:right;line-height:1.4">${bnCalDate}<br><span style="font-size:11px;color:#222">${engDateFormatted}</span></span>`;
+  } else if (style === 'english') {
+    return engDateFormatted;
+  } else {
+    return bnCalDate;
+  }
+}
+
 
 function showToast(message, type = 'success') {
   const container = document.getElementById('toastContainer');
@@ -279,9 +304,54 @@ async function importExcelFile(input, endpoint, label, afterImport) {
   }
 }
 
+async function downloadExcelTemplate(endpoint, filename, button) {
+  if (button) button.disabled = true;
+  try {
+    const token = API.getToken();
+    const response = await fetch(`/api${endpoint}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+
+    if (!response.ok) {
+      let message = 'Excel টেমপ্লেট ডাউনলোড করা যায়নি।';
+      try {
+        const result = await response.json();
+        message = result.message || message;
+      } catch (error) {
+        console.warn('Could not read Excel template download error:', error);
+      }
+      if (response.status === 401) {
+        API.setToken(null);
+        API.setUser(null);
+        window.dispatchEvent(new CustomEvent('auth-expired'));
+      }
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    showToast('Excel টেমপ্লেট ডাউনলোড হয়েছে।', 'success');
+  } catch (error) {
+    console.error('Excel template download error:', error);
+    showToast(error.message || 'Excel টেমপ্লেট ডাউনলোড করা যায়নি।', 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function openModal(id) {
   const modal = document.getElementById(id);
   if (modal) modal.classList.remove('hidden');
+  if (id === 'singleDeductionModal') {
+    populateRepaymentLoanDropdowns();
+  }
   if (id === 'newEmployeeModal' && !document.getElementById('empEditId')?.value) {
     populateEmployeePostingDropdown();
   }
@@ -305,6 +375,26 @@ function closeModal(id) {
     }
   }
 }
+
+// ----------------- NUMERIC INPUT GUARDS -----------------
+// 1. Prevent mouse wheel from accidentally altering number input figures (blurs active input)
+document.addEventListener('wheel', (e) => {
+  if (document.activeElement && (document.activeElement.type === 'number' || document.activeElement.matches?.('input[type="number"]'))) {
+    document.activeElement.blur();
+  }
+  if (e.target && (e.target.type === 'number' || e.target.matches?.('input[type="number"]'))) {
+    e.target.blur();
+  }
+}, { passive: true });
+
+// 2. Prevent ArrowUp and ArrowDown from modifying numeric figures (only direct keyboard input allowed)
+document.addEventListener('keydown', (e) => {
+  if (e.target && (e.target.type === 'number' || e.target.matches?.('input[type="number"]'))) {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+    }
+  }
+});
 
 // ----------------- AUTHENTICATION & INITIALIZATION -----------------
 
@@ -332,15 +422,22 @@ window.addEventListener('auth-expired', () => {
 });
 
 function showLoginUI() {
+  state.user = null;
   document.getElementById('loginScreen').classList.remove('hidden');
   document.getElementById('authenticatedWorkspace').classList.add('hidden');
   document.getElementById('userHeaderSection').classList.add('hidden');
+  document.getElementById('spotlightSearchWrapper').classList.add('hidden');
+  document.getElementById('connectionBadge').classList.add('hidden');
+  document.querySelectorAll('.modal-backdrop').forEach((modal) => modal.classList.add('hidden'));
 }
 
 function showAuthenticatedUI() {
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('authenticatedWorkspace').classList.remove('hidden');
   document.getElementById('userHeaderSection').classList.remove('hidden');
+  document.getElementById('spotlightSearchWrapper').classList.remove('hidden');
+  document.getElementById('connectionBadge').classList.remove('hidden');
+  setOwnPbsSettingsAccess();
 
   document.getElementById('userFullName').textContent = state.user.fullName || state.user.username;
   const roleLabels = {
@@ -348,7 +445,10 @@ function showAuthenticatedUI() {
     accounts: 'হিসাব শাখা',
     employee: 'কর্মচারী পোর্টাল'
   };
-  document.getElementById('userRoleBadge').textContent = roleLabels[state.user.role] || state.user.role;
+  const roleLabel = state.user.role === 'admin' && state.user.isMasterAdmin
+    ? 'মাস্টার অ্যাডমিন'
+    : roleLabels[state.user.role] || state.user.role;
+  document.getElementById('userRoleBadge').textContent = roleLabel;
 
   // Toggle navigation tabs based on role
   if (state.user.role === 'employee') {
@@ -397,13 +497,6 @@ async function submitChangePassword(event) {
   } finally {
     submitButton.disabled = false;
   }
-}
-
-// Quick demo login handler
-async function quickLogin(username, password) {
-  document.getElementById('loginUsername').value = username;
-  document.getElementById('loginPassword').value = password;
-  await handleLoginSubmit();
 }
 
 async function handleLoginSubmit() {
@@ -493,8 +586,8 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 // Expose handlers to global window object
-window.quickLogin = quickLogin;
 window.handleLoginSubmit = handleLoginSubmit;
+window.downloadExcelTemplate = downloadExcelTemplate;
 window.switchTab = switchTab;
 window.openModal = openModal;
 window.closeModal = closeModal;
@@ -566,6 +659,18 @@ window.loadEmployeePortal = loadEmployeePortal;
 window.printEmployeePortalLedger = printEmployeePortalLedger;
 window.exportEmployeePortalLedgerExcel = exportEmployeePortalLedgerExcel;
 
+function openEmployeeLedgerDirectly(empId, loanId) {
+  const dropdown = document.getElementById('spotlightDropdown');
+  if (dropdown) dropdown.classList.add('hidden');
+  const input = document.getElementById('globalSpotlightInput');
+  if (input) input.value = '';
+
+  switchTab('ledgers');
+  switchLedgerSubtab('own');
+  loadOwnPbsLedger(empId, loanId);
+}
+window.openEmployeeLedgerDirectly = openEmployeeLedgerDirectly;
+
 // Global Spotlight Quick Search (Ctrl+K)
 function handleGlobalSpotlightSearch(query) {
   const dropdown = document.getElementById('spotlightDropdown');
@@ -605,22 +710,25 @@ function handleGlobalSpotlightSearch(query) {
 
   let html = `<div class="p-2 space-y-1">`;
   if (matchedEmployees.length > 0) {
-    html += `<div class="px-2 py-1 text-[11px] font-bold text-gray-400 uppercase tracking-wider">কর্মকর্তা-কর্মচারী (${toBn(matchedEmployees.length)})</div>`;
+    html += `<div class="px-2 py-1 text-[11px] font-bold text-gray-400 uppercase tracking-wider">কর্মকর্তা-কর্মচারী (ক্লিক করে সরাসরি খতিয়ান দেখুন)</div>`;
     matchedEmployees.slice(0, 5).forEach(emp => {
       html += `
-        <div onclick="openQuickEmployeeSummaryModal(${emp.id})" class="p-2.5 rounded-lg hover:bg-emerald-50 cursor-pointer transition flex items-center justify-between border border-transparent hover:border-emerald-200">
+        <div onclick="openEmployeeLedgerDirectly(${emp.id})" class="p-2.5 rounded-lg hover:bg-emerald-50 cursor-pointer transition flex items-center justify-between border border-transparent hover:border-emerald-200 group">
           <div class="flex items-center space-x-2.5">
-            <div class="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs">
+            <div class="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs group-hover:bg-emerald-700 group-hover:text-white transition">
               ${(emp.emp_code || '').slice(-2)}
             </div>
             <div>
-              <div class="font-bold text-xs text-gray-900">${emp.name} <span class="font-mono text-emerald-800 font-semibold">(${emp.emp_code})</span></div>
+              <div class="font-bold text-xs text-gray-900 group-hover:text-emerald-900">${emp.name} <span class="font-mono text-emerald-800 font-semibold">(${emp.emp_code})</span></div>
               <div class="text-[11px] text-gray-500">${emp.designation} &bull; ${emp.current_posting_pbs || 'নিজস্ব পবিস'}</div>
             </div>
           </div>
           <div class="text-right">
             <div class="text-xs font-bold font-mono text-gray-900">${formatBDT(emp.total_principal_balance)}</div>
-            <div class="text-[10px] text-gray-400">অবশিষ্ট আসল</div>
+            <div class="text-[10px] text-emerald-700 font-medium group-hover:underline flex items-center justify-end space-x-0.5">
+              <span>খতিয়ান দেখুন</span>
+              <i data-lucide="arrow-right" class="w-3 h-3 inline"></i>
+            </div>
           </div>
         </div>
       `;
@@ -631,9 +739,9 @@ function handleGlobalSpotlightSearch(query) {
     html += `<div class="px-2 pt-2 py-1 text-[11px] font-bold text-gray-400 uppercase tracking-wider border-t mt-1">গৃহ ঋণ (${toBn(matchedLoans.length)})</div>`;
     matchedLoans.slice(0, 4).forEach(l => {
       html += `
-        <div onclick="openQuickEmployeeSummaryModal(${l.employee_id})" class="p-2 rounded-lg hover:bg-blue-50 cursor-pointer transition flex items-center justify-between">
+        <div onclick="openEmployeeLedgerDirectly(${l.employee_id}, ${l.id})" class="p-2 rounded-lg hover:bg-blue-50 cursor-pointer transition flex items-center justify-between group">
           <div>
-            <div class="font-bold text-xs text-blue-950 font-mono">${l.loan_no} <span class="font-sans text-gray-700 font-normal">(${l.emp_name})</span></div>
+            <div class="font-bold text-xs text-blue-950 font-mono group-hover:text-blue-900">${l.loan_no} <span class="font-sans text-gray-700 font-normal">(${l.emp_name})</span></div>
             <div class="text-[11px] text-gray-500">${l.origin_pbs_name} &bull; আসল: ${formatBDT(l.disbursed_amount)}</div>
           </div>
           <div class="text-right">
@@ -732,11 +840,11 @@ async function openQuickEmployeeSummaryModal(empId) {
 
           <!-- Action Buttons -->
           <div class="flex items-center justify-end space-x-2 pt-2 border-t text-xs">
-            <button onclick="closeModal('quickEmployeeSummaryModal'); switchTab('ledgers'); loadOwnPbsLedger(${loan.id});" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold transition flex items-center space-x-1">
+            <button onclick="closeModal('quickEmployeeSummaryModal'); switchTab('ledgers'); switchLedgerSubtab('own'); loadOwnPbsLedger(${emp.id}, ${loan.id});" class="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg font-bold transition flex items-center space-x-1 border border-emerald-200 cursor-pointer shadow-xs">
               <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
               <span>লেজার দেখুন</span>
             </button>
-            <button onclick="closeModal('quickEmployeeSummaryModal'); openSingleDeductionForLoan(${loan.id});" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-semibold transition flex items-center space-x-1 shadow">
+            <button onclick="closeModal('quickEmployeeSummaryModal'); openSingleDeductionForLoan(${loan.id});" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-semibold transition flex items-center space-x-1 shadow cursor-pointer">
               <i data-lucide="plus" class="w-3.5 h-3.5"></i>
               <span>কিস্তি কর্তন</span>
             </button>
@@ -756,11 +864,14 @@ async function openQuickEmployeeSummaryModal(empId) {
 
 function openSingleDeductionForLoan(loanId) {
   openModal('singleDeductionModal');
+  populateRepaymentLoanDropdowns();
+  switchDeductionModalTab('single');
   const sel = document.getElementById('deductionLoanSelect');
   if (sel) {
     sel.value = loanId;
-    updateDeductionPreview();
+    onDeductionBorrowerSelected();
   }
+  onRepaymentMethodChange();
 }
 
 // Close spotlight dropdown on outside click
@@ -769,6 +880,13 @@ document.addEventListener('click', (e) => {
   const dropdown = document.getElementById('spotlightDropdown');
   if (container && dropdown && !container.contains(e.target)) {
     dropdown.classList.add('hidden');
+  }
+
+  const borrowerMenu = document.getElementById('deductionBorrowerDropdownMenu');
+  if (borrowerMenu && !borrowerMenu.classList.contains('hidden')) {
+    if (!borrowerMenu.contains(e.target) && !e.target.closest('button[onclick*="toggleBorrowerSearchDropdown"]')) {
+      borrowerMenu.classList.add('hidden');
+    }
   }
 });
 
@@ -787,7 +905,6 @@ document.addEventListener('keydown', (e) => {
 document.getElementById('logoutBtn').addEventListener('click', () => {
   API.setToken(null);
   API.setUser(null);
-  state.user = null;
   showLoginUI();
   showToast('লগআউট সম্পন্ন হয়েছে।', 'info');
 });
@@ -828,7 +945,7 @@ function switchTab(tabId) {
       loadLoans();
       break;
     case 'deductions':
-      loadRepayments();
+      loadDeductionsTab();
       break;
     case 'provisions':
       loadProvisions();
@@ -848,6 +965,9 @@ function switchTab(tabId) {
     case 'comparative':
       loadComparativeStatement();
       break;
+    case 'interest_calc':
+      loadInterestCalcTab();
+      break;
     case 'audit':
       loadAuditLogs();
       break;
@@ -863,6 +983,10 @@ function switchTab(tabId) {
     case 'emp_portal':
     case 'emp_ledger':
       loadEmployeePortal();
+      break;
+    case 'user_manual':
+      // User manual is static, ensure icons render
+      if (window.lucide) lucide.createIcons();
       break;
   }
 
@@ -880,6 +1004,18 @@ async function loadInitialData() {
       if (res.pbsSettings && res.pbsSettings.pbs_name) {
         document.getElementById('headerPbsName').textContent = res.pbsSettings.pbs_name;
       }
+      if (res.dbPath) {
+        const el = document.getElementById('sidebarDbLocation');
+        if (el) {
+          el.textContent = res.dbPath;
+          el.title = res.dbPath;
+        }
+        const manualEl = document.getElementById('manualDbLocation');
+        if (manualEl) {
+          manualEl.textContent = res.dbPath;
+          manualEl.title = res.dbPath;
+        }
+      }
     }
   } catch (err) {
     console.error('Failed to load initial settings:', err);
@@ -888,6 +1024,10 @@ async function loadInitialData() {
 
 // 1. DASHBOARD
 let dashboardChartInstance = null;
+let currentDashBorrowerFilter = 'ALL';
+let currentDeductionsBorrowerFilter = 'ALL';
+let dashBorrowersData = [];
+
 async function loadDashboard() {
   try {
     const loansRes = await API.get('/loans');
@@ -895,16 +1035,60 @@ async function loadDashboard() {
 
     if (loansRes.success) {
       state.loans = loansRes.loans || [];
-      const summary = loansRes.summary;
-      document.getElementById('statTotalDisbursed').textContent = formatBDT(summary.totalDisbursed);
-      document.getElementById('statPrincipalBalance').textContent = formatBDT(summary.totalPrincipalBalance);
-      document.getElementById('statInterestBalance').textContent = formatBDT(summary.totalInterestBalance);
+      const summary = loansRes.summary || {};
+      const totalDisbursed = summary.totalDisbursed || 0;
+      const principalBal = summary.totalPrincipalBalance || 0;
+      const interestBal = summary.totalInterestBalance || 0;
+      const grandTotal = principalBal + interestBal;
+      const totalRepaidPrincipal = Math.max(0, totalDisbursed - principalBal);
+
+      const ownLoans = state.loans.filter(l => l.loan_source_type === 'OWN_PBS');
+      const otherLoans = state.loans.filter(l => l.loan_source_type === 'OTHER_PBS');
+      const ownPrin = ownLoans.reduce((s, l) => s + (l.principal_balance || 0), 0);
+      const otherPrin = otherLoans.reduce((s, l) => s + (l.principal_balance || 0), 0);
+
+      const elDisbursed = document.getElementById('statTotalDisbursed');
+      if (elDisbursed) elDisbursed.textContent = formatBDT(totalDisbursed);
+
+      const elDisbursedSub = document.getElementById('statTotalDisbursedSub');
+      if (elDisbursedSub) elDisbursedSub.innerHTML = `<i data-lucide="check-circle-2" class="w-3.5 h-3.5 mr-1 shrink-0"></i> <span class="truncate">${toBn(state.loans.length)}টি ঋণ মঞ্জুরি হিসাব | মোট আসল আদায়: ${formatBDT(totalRepaidPrincipal)}</span>`;
+
+      const elPrincipal = document.getElementById('statPrincipalBalance');
+      if (elPrincipal) elPrincipal.textContent = formatBDT(principalBal);
+
+      const elPrincipalSub = document.getElementById('statPrincipalBalanceSub');
+      if (elPrincipalSub) elPrincipalSub.textContent = `নিজস্ব: ${formatBDT(ownPrin)} | অন্য পবিস: ${formatBDT(otherPrin)}`;
+
+      const elInterest = document.getElementById('statInterestBalance');
+      if (elInterest) elInterest.textContent = formatBDT(interestBal);
+
+      const elInterestSub = document.getElementById('statInterestBalanceSub');
+      if (elInterestSub) elInterestSub.textContent = 'সরকারি বিধি: ৭% ও ৮% হারে সঞ্চিত';
+
+      const elGrandTotal = document.getElementById('statGrandTotalBalance');
+      if (elGrandTotal) elGrandTotal.textContent = formatBDT(grandTotal);
+
+      const elGrandTotalSub = document.getElementById('statGrandTotalBalanceSub');
+      if (elGrandTotalSub) elGrandTotalSub.innerHTML = `<i data-lucide="shield-check" class="w-3.5 h-3.5 mr-1 shrink-0"></i> <span class="truncate">আসল + সুদ সর্বমোট পাওনা</span>`;
+
+      // Portfolio Ribbon Fields
+      const elRibbonOwnCount = document.getElementById('ribbonOwnCount');
+      if (elRibbonOwnCount) elRibbonOwnCount.textContent = `${toBn(ownLoans.length)}টি`;
+      const elRibbonOwnPrin = document.getElementById('ribbonOwnPrin');
+      if (elRibbonOwnPrin) elRibbonOwnPrin.textContent = formatBDT(ownPrin);
+      const elRibbonOtherCount = document.getElementById('ribbonOtherCount');
+      if (elRibbonOtherCount) elRibbonOtherCount.textContent = `${toBn(otherLoans.length)}টি`;
+      const elRibbonOtherPrin = document.getElementById('ribbonOtherPrin');
+      if (elRibbonOtherPrin) elRibbonOtherPrin.textContent = formatBDT(otherPrin);
+      const elRibbonIntBal = document.getElementById('ribbonIntBal');
+      if (elRibbonIntBal) elRibbonIntBal.textContent = formatBDT(interestBal);
     }
 
     let pendingTotal = 0;
     if (remRes.success) {
       pendingTotal = remRes.pendingList.reduce((acc, curr) => acc + curr.totalAmount, 0);
-      document.getElementById('statPendingRemittance').textContent = formatBDT(pendingTotal);
+      const elPending = document.getElementById('statPendingRemittance');
+      if (elPending) elPending.textContent = formatBDT(pendingTotal);
     }
 
     // Update Guided Monthly Workflow Hub
@@ -915,9 +1099,39 @@ async function loadDashboard() {
     if (compRes.success && compRes.statement) {
       renderDashboardChart(compRes.statement);
     }
+
+    if (window.lucide) lucide.createIcons();
   } catch (err) {
     console.error('Dashboard load error:', err);
   }
+}
+
+// Helper: Check if loan is within the 12-month moratorium/grace period after disbursement for OWN_PBS
+function isLoanInGracePeriod(loan, targetMonth = null) {
+  const currentMonth = targetMonth || new Date().toISOString().slice(0, 7);
+  const isOwnPbs = (loan.loan_source_type === 'OWN_PBS' || !loan.loan_source_type);
+  if (!isOwnPbs) return false;
+
+  // Rule: If borrower has already had at least one deduction/repayment, they have voluntarily started repayment
+  const hasStartedRepayment = (Number(loan.repayments_count) > 0) || Boolean(loan.first_deduction_month);
+  if (hasStartedRepayment) return false;
+
+  // If no repayment made yet, check 12-month moratorium from disbursement date
+  const disb = loan.disbursement_date || loan.sanction_date;
+  if (!disb) return false;
+
+  let [y, m] = disb.slice(0, 7).split('-').map(Number);
+  y += 1; // 12 months after disbursement
+  const scheduledStartMonth = `${y}-${String(m).padStart(2, '0')}`;
+  return currentMonth < scheduledStartMonth;
+}
+
+function getLoanScheduledStartMonth(loan) {
+  const disb = loan.disbursement_date || loan.sanction_date;
+  if (!disb) return '';
+  let [y, m] = disb.slice(0, 7).split('-').map(Number);
+  y += 1;
+  return `${y}-${String(m).padStart(2, '0')}`;
 }
 
 async function updateDashboardMonthlyWorkflow(loansRes, remRes, pendingTotal = 0) {
@@ -931,41 +1145,76 @@ async function updateDashboardMonthlyWorkflow(loansRes, remRes, pendingTotal = 0
     const monthBadge = document.getElementById('hubMonthBadge');
     if (monthBadge) monthBadge.textContent = currentMonthText;
 
-    const activeLoans = (loansRes?.loans || state.loans || []).filter(l => l.status === 'ACTIVE');
+    const snapMonthBadge = document.getElementById('dashBorrowerSnapshotMonth');
+    if (snapMonthBadge) snapMonthBadge.textContent = currentMonthText;
+
+    const allActiveLoans = (loansRes?.loans || state.loans || []).filter(l => l.status === 'ACTIVE');
+    const suspendedLoans = allActiveLoans.filter(l => !!l.salary_deduction_suspended);
+    const graceLoans = allActiveLoans.filter(l => !l.salary_deduction_suspended && isLoanInGracePeriod(l, currentMonth));
+    const eligibleActiveLoans = allActiveLoans.filter(l => !l.salary_deduction_suspended && !isLoanInGracePeriod(l, currentMonth));
+    const suspendedCount = suspendedLoans.length;
+    const graceCount = graceLoans.length;
 
     // 1. Check Monthly Deductions
     const repRes = await API.get('/repayments', { month: currentMonth });
     const deductionBadge = document.getElementById('hubDeductionBadge');
     const deductionText = document.getElementById('hubDeductionText');
 
-    if (deductionBadge && deductionText) {
-      const deductedCount = repRes?.repayments?.length || 0;
-      const totalDeductedAmount = repRes?.summary?.totalAmount || 0;
+    const monthRepayments = repRes?.repayments || [];
+    const deductedLoanIds = new Set(monthRepayments.map(r => r.loan_id));
+    const deductedEligibleLoans = eligibleActiveLoans.filter(l => deductedLoanIds.has(l.id));
+    const deductedCount = deductedEligibleLoans.length;
+    const totalDeductedAmount = repRes?.summary?.totalAmount || 0;
+    const remainingCount = eligibleActiveLoans.length - deductedCount;
 
-      if (activeLoans.length === 0) {
-        deductionBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-gray-500/20 text-gray-300 border border-gray-500/30';
-        deductionBadge.textContent = 'ঋণ নেই';
-        deductionText.textContent = 'বর্তমানে কোনো সক্রিয় ঋণ নেই।';
-      } else if (deductedCount >= activeLoans.length) {
+    const extraNotes = [];
+    if (suspendedCount > 0) extraNotes.push(`${toBn(suspendedCount)} জনের কর্তন স্থগিত`);
+    if (graceCount > 0) extraNotes.push(`${toBn(graceCount)} জন ১২ মাস গ্রেস পিরিয়ডে`);
+    const statusNote = extraNotes.length > 0 ? ` (${extraNotes.join(', ')})` : '';
+
+    if (deductionBadge && deductionText) {
+      if (eligibleActiveLoans.length === 0) {
+        if (suspendedCount > 0 || graceCount > 0) {
+          deductionBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30';
+          deductionBadge.textContent = suspendedCount > 0 ? '⏸️ কর্তন স্থগিত' : '⏳ গ্রেস পিরিয়ড';
+          deductionText.textContent = `চলতি মাসে কোনো নিয়মিত কিস্তি বকেয়া নেই${statusNote}`;
+        } else {
+          deductionBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-gray-500/20 text-gray-300 border border-gray-500/30';
+          deductionBadge.textContent = 'ঋণ নেই';
+          deductionText.textContent = 'বর্তমানে কোনো সক্রিয় ঋণ নেই।';
+        }
+      } else if (remainingCount === 0) {
         deductionBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
         deductionBadge.textContent = '🟢 সম্পন্ন';
-        deductionText.textContent = `সকল ${toBn(activeLoans.length)} জন ঋণগ্রহীতার কিস্তি কর্তন সম্পন্ন (মোট আদায়: ${formatBDT(totalDeductedAmount)})`;
+        deductionText.textContent = `সকল ${toBn(eligibleActiveLoans.length)} জন ঋণগ্রহীতার কিস্তি কর্তন সম্পন্ন (মোট আদায়: ${formatBDT(totalDeductedAmount)})${statusNote}`;
       } else if (deductedCount > 0) {
         deductionBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30';
         deductionBadge.textContent = '🟡 আংশিক সম্পন্ন';
-        deductionText.textContent = `${toBn(deductedCount)} জনের কর্তন হয়েছে, এখনো ${toBn(activeLoans.length - deductedCount)} জনের বাকি`;
+        deductionText.textContent = `${toBn(deductedCount)} জনের কর্তন হয়েছে, এখনো ${toBn(remainingCount)} জনের বাকি${statusNote}`;
       } else {
         deductionBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-red-500/20 text-red-300 border border-red-500/30';
         deductionBadge.textContent = '🔴 কর্তন বাকি';
-        deductionText.textContent = `চলতি মাসে ${toBn(activeLoans.length)} জন সক্রিয় ঋণের কিস্তি কর্তন এখনো বাকি আছে`;
+        deductionText.textContent = `চলতি মাসে ${toBn(remainingCount)} জন সক্রিয় ঋণের কিস্তি কর্তন এখনো বাকি আছে${statusNote}`;
       }
     }
+
+    // Micro-chips for Step 1
+    const elChipTotalActive = document.getElementById('hubChipTotalActive');
+    if (elChipTotalActive) elChipTotalActive.textContent = `${toBn(allActiveLoans.length)}টি`;
+    const elChipEligible = document.getElementById('hubChipEligible');
+    if (elChipEligible) elChipEligible.textContent = `${toBn(eligibleActiveLoans.length)}টি`;
+    const elChipSuspended = document.getElementById('hubChipSuspended');
+    if (elChipSuspended) elChipSuspended.textContent = `${toBn(suspendedCount)}টি`;
+    const elChipDeducted = document.getElementById('hubChipDeducted');
+    if (elChipDeducted) elChipDeducted.textContent = `${toBn(deductedCount)}টি`;
 
     // 2. Check Inter-PBS Remittance
     const remittanceBadge = document.getElementById('hubRemittanceBadge');
     const remittanceText = document.getElementById('hubRemittanceText');
+    const pendingList = remRes?.pendingList || [];
+    const otherLoansCount = allActiveLoans.filter(l => l.loan_source_type === 'OTHER_PBS').length;
+
     if (remittanceBadge && remittanceText) {
-      const pendingList = remRes?.pendingList || [];
       if (pendingList.length > 0) {
         remittanceBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30';
         remittanceBadge.textContent = `🟣 ${toBn(pendingList.length)}টি পবিস বাকি`;
@@ -977,18 +1226,29 @@ async function updateDashboardMonthlyWorkflow(loansRes, remRes, pendingTotal = 0
       }
     }
 
+    // Micro-chips for Step 2
+    const elChipOtherLoans = document.getElementById('hubChipOtherLoans');
+    if (elChipOtherLoans) elChipOtherLoans.textContent = `${toBn(otherLoansCount)}টি`;
+    const elChipPendingRemit = document.getElementById('statPendingRemittance');
+    if (elChipPendingRemit) elChipPendingRemit.textContent = formatBDT(pendingTotal);
+
     // 3. Check Interest Provisions
     const provisionBadge = document.getElementById('hubProvisionBadge');
     const provisionText = document.getElementById('hubProvisionText');
-    if (provisionBadge && provisionText) {
+    const ownActiveLoans = allActiveLoans.filter(l => l.loan_source_type === 'OWN_PBS');
+
+    let provCount = 0;
+    try {
       const provRes = await API.get('/provisions', { month: currentMonth });
-      const provCount = provRes?.provisions?.length || 0;
+      provCount = provRes?.provisions?.length || 0;
+    } catch (_) {}
+
+    if (provisionBadge && provisionText) {
       if (provCount > 0) {
         provisionBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
         provisionBadge.textContent = '🟢 সম্পন্ন';
         provisionText.textContent = `চলতি মাসে ${toBn(provCount)}টি নিজস্ব ঋণের সরল সুদ প্রভিশন গণনা সম্পন্ন হয়েছে`;
       } else {
-        const ownActiveLoans = activeLoans.filter(l => l.loan_source_type === 'OWN_PBS');
         provisionBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30';
         provisionBadge.textContent = '⚪ অপেক্ষমাণ';
         provisionText.textContent = ownActiveLoans.length > 0
@@ -996,8 +1256,292 @@ async function updateDashboardMonthlyWorkflow(loansRes, remRes, pendingTotal = 0
           : 'কোনো নিজস্ব পবিস ঋণ নেই';
       }
     }
+
+    // Micro-chips for Step 3
+    const elChipOwnLoans = document.getElementById('hubChipOwnLoans');
+    if (elChipOwnLoans) elChipOwnLoans.textContent = `${toBn(ownActiveLoans.length)}টি`;
+    const elChipProvStatus = document.getElementById('hubChipProvStatus');
+    if (elChipProvStatus) elChipProvStatus.textContent = (provCount > 0 ? 'গণনা সম্পন্ন' : 'অপেক্ষমাণ');
+
+    // 4. Render Live Dashboard Borrower Snapshot Table
+    renderDashboardBorrowerSnapshot(allActiveLoans, monthRepayments);
+
+    if (window.lucide) lucide.createIcons();
   } catch (err) {
     console.warn('Failed to update monthly workflow hub:', err);
+  }
+}
+
+function renderBorrowerSnapshotRow(item, idx) {
+  const l = item.loan;
+  const isOther = (l.loan_source_type === 'OTHER_PBS');
+  const sourceBadge = isOther
+    ? `<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200">অন্য পবিস (${escapeHtml(l.origin_pbs_name || '')})</span>`
+    : `<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-900 border border-emerald-200">নিজস্ব পবিস</span>`;
+
+  let statusBadge = '';
+  if (item.deductionStatus === 'PAID') {
+    statusBadge = '<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 whitespace-nowrap">🟢 কর্তন সম্পন্ন</span>';
+  } else if (item.deductionStatus === 'SUSPENDED') {
+    statusBadge = '<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 whitespace-nowrap">⏸️ কর্তন স্থগিত</span>';
+  } else if (item.deductionStatus === 'GRACE_PERIOD') {
+    const startM = getLoanScheduledStartMonth(l);
+    statusBadge = `<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-300 whitespace-nowrap" title="বিতরণ হতে ১২ মাস গ্রেস পিরিয়ড চলমান। কিস্তি শুরু: ${startM}">⏳ ১২ মাস গ্রেস (${toBn(startM.slice(-2))}/${toBn(startM.slice(0, 4))})</span>`;
+  } else {
+    statusBadge = '<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300 whitespace-nowrap">🔴 কর্তন বাকি</span>';
+  }
+
+  return `
+    <tr class="hover:bg-emerald-50/40 transition">
+      <td class="text-center font-mono text-gray-500">${toBn(idx + 1)}</td>
+      <td>
+        <div class="font-bold text-gray-900 leading-tight">${escapeHtml(l.emp_name || '')}</div>
+        <div class="text-[11px] text-gray-500 leading-tight mt-0.5">${escapeHtml(l.designation || '')} &bull; <span class="font-mono text-emerald-800 font-bold">পে আইডি: ${escapeHtml(l.emp_code || '')}</span></div>
+      </td>
+      <td>
+        <div class="font-mono font-bold text-blue-900 leading-tight">${escapeHtml(l.loan_no || '')}</div>
+        <div class="mt-0.5">${sourceBadge}</div>
+      </td>
+      <td class="text-right font-mono font-bold text-gray-900">${formatBDT(l.disbursed_amount)}</td>
+      <td class="text-right font-mono font-bold text-blue-900">${formatBDT(l.principal_balance)}</td>
+      <td class="text-right font-mono font-bold text-amber-800">${formatBDT(l.interest_balance)}</td>
+      <td class="text-right font-mono font-bold text-gray-900">${formatBDT(l.monthly_installment)}</td>
+      <td class="text-center">${statusBadge}</td>
+      <td class="text-center">
+        <div class="flex items-center justify-center space-x-1">
+          <button onclick="openLoanInstallmentPostingModal(${l.id})" class="px-2 py-0.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-[11px] font-bold shadow-2xs transition whitespace-nowrap cursor-pointer" title="কিস্তি বা জমা পোস্টিং">
+            পোস্টিং
+          </button>
+          <button onclick="viewLoanLedger(${l.id})" class="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 rounded text-[11px] font-bold transition cursor-pointer" title="লেজার দেখুন">
+            লেজার
+          </button>
+          <button onclick="toggleLoanSalaryDeduction(${l.id}, ${!l.salary_deduction_suspended})" class="px-2 py-0.5 ${l.salary_deduction_suspended ? 'bg-blue-700 hover:bg-blue-800' : 'bg-rose-700 hover:bg-rose-800'} text-white rounded text-[10px] font-bold transition whitespace-nowrap cursor-pointer" title="${l.salary_deduction_suspended ? 'বেতন কর্তন পুনরায় চালু করুন' : 'বেতন কর্তন স্থগিত করুন'}">
+            ${l.salary_deduction_suspended ? 'চালু' : 'স্থগিত'}
+          </button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderDashboardBorrowerSnapshot(loans, repayments) {
+  const deductedLoanIds = new Set((repayments || []).map(r => r.loan_id));
+  const currentMonth = new Date().toISOString().slice(0, 7);
+
+  dashBorrowersData = (loans || []).map(loan => {
+    const isDeducted = deductedLoanIds.has(loan.id);
+    const isSuspended = Boolean(loan.salary_deduction_suspended);
+    const inGracePeriod = isLoanInGracePeriod(loan, currentMonth);
+
+    let deductionStatus = 'PENDING';
+    if (isDeducted) {
+      deductionStatus = 'PAID';
+    } else if (isSuspended) {
+      deductionStatus = 'SUSPENDED';
+    } else if (inGracePeriod) {
+      deductionStatus = 'GRACE_PERIOD';
+    } else {
+      deductionStatus = 'PENDING';
+    }
+
+    return {
+      loan,
+      isDeducted,
+      isSuspended,
+      inGracePeriod,
+      deductionStatus
+    };
+  });
+
+  // Update filter counts
+  const countAll = dashBorrowersData.length;
+  const countPending = dashBorrowersData.filter(d => d.deductionStatus === 'PENDING').length;
+  const countSuspended = dashBorrowersData.filter(d => d.deductionStatus === 'SUSPENDED').length;
+  const countGrace = dashBorrowersData.filter(d => d.deductionStatus === 'GRACE_PERIOD').length;
+  const countPaid = dashBorrowersData.filter(d => d.deductionStatus === 'PAID').length;
+
+  // Update Dashboard counts
+  const elAll = document.getElementById('dashFilterCount-ALL');
+  const elPending = document.getElementById('dashFilterCount-PENDING');
+  const elSuspended = document.getElementById('dashFilterCount-SUSPENDED');
+  const elGrace = document.getElementById('dashFilterCount-GRACE_PERIOD');
+  const elPaid = document.getElementById('dashFilterCount-PAID');
+  if (elAll) elAll.textContent = toBn(countAll);
+  if (elPending) elPending.textContent = toBn(countPending);
+  if (elSuspended) elSuspended.textContent = toBn(countSuspended);
+  if (elGrace) elGrace.textContent = toBn(countGrace);
+  if (elPaid) elPaid.textContent = toBn(countPaid);
+
+  // Update Deductions Tab counts
+  const dedAll = document.getElementById('deductionsFilterCount-ALL');
+  const dedPending = document.getElementById('deductionsFilterCount-PENDING');
+  const dedSuspended = document.getElementById('deductionsFilterCount-SUSPENDED');
+  const dedGrace = document.getElementById('deductionsFilterCount-GRACE_PERIOD');
+  const dedPaid = document.getElementById('deductionsFilterCount-PAID');
+  if (dedAll) dedAll.textContent = toBn(countAll);
+  if (dedPending) dedPending.textContent = toBn(countPending);
+  if (dedSuspended) dedSuspended.textContent = toBn(countSuspended);
+  if (dedGrace) dedGrace.textContent = toBn(countGrace);
+  if (dedPaid) dedPaid.textContent = toBn(countPaid);
+
+  applyDashboardBorrowerFilter(currentDashBorrowerFilter);
+  applyDeductionsBorrowerFilter(currentDeductionsBorrowerFilter);
+}
+
+function filterDashboardBorrowers(filterType) {
+  currentDashBorrowerFilter = filterType;
+  document.querySelectorAll('.dash-borrower-filter-btn').forEach(btn => {
+    btn.className = 'dash-borrower-filter-btn px-2.5 py-1 rounded-lg font-semibold text-gray-700 hover:bg-gray-200 transition bg-gray-100 cursor-pointer';
+  });
+  const activeBtn = document.getElementById(`dashFilterBtn-${filterType}`);
+  if (activeBtn) {
+    activeBtn.className = 'dash-borrower-filter-btn px-2.5 py-1 rounded-lg font-bold transition bg-emerald-800 text-white shadow-2xs cursor-pointer';
+  }
+  applyDashboardBorrowerFilter(filterType);
+}
+
+function applyDashboardBorrowerFilter(filterType) {
+  const tbody = document.getElementById('dashBorrowerSnapshotTbody');
+  if (!tbody) return;
+
+  let filtered = dashBorrowersData;
+  if (filterType !== 'ALL') {
+    filtered = dashBorrowersData.filter(d => d.deductionStatus === filterType);
+  }
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="9" class="p-6 text-center text-gray-500 font-medium bg-gray-50/50">
+          এই ফিল্টারে কোনো ঋণগ্রহীতা নেই।
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map((item, idx) => renderBorrowerSnapshotRow(item, idx)).join('');
+}
+
+function filterDeductionsBorrowers(filterType) {
+  currentDeductionsBorrowerFilter = filterType;
+  document.querySelectorAll('.deductions-borrower-filter-btn').forEach(btn => {
+    btn.className = 'deductions-borrower-filter-btn px-2.5 py-1 rounded-lg font-semibold text-gray-700 hover:bg-gray-200 transition bg-gray-100 cursor-pointer';
+  });
+  const activeBtn = document.getElementById(`deductionsFilterBtn-${filterType}`);
+  if (activeBtn) {
+    activeBtn.className = 'deductions-borrower-filter-btn px-2.5 py-1 rounded-lg font-bold transition bg-emerald-800 text-white shadow-2xs cursor-pointer';
+  }
+  applyDeductionsBorrowerFilter(filterType);
+}
+
+function searchDeductionsBorrowers() {
+  applyDeductionsBorrowerFilter(currentDeductionsBorrowerFilter);
+}
+
+function applyDeductionsBorrowerFilter(filterType) {
+  const tbody = document.getElementById('deductionsBorrowerSnapshotTbody');
+  if (!tbody) return;
+
+  const searchQuery = (document.getElementById('deductionsBorrowerSearchInput')?.value || '').trim().toLowerCase();
+
+  let filtered = dashBorrowersData;
+  if (filterType !== 'ALL') {
+    filtered = filtered.filter(d => d.deductionStatus === filterType);
+  }
+
+  if (searchQuery) {
+    filtered = filtered.filter(d => {
+      const l = d.loan;
+      const text = [
+        l.emp_name,
+        l.emp_code,
+        l.designation,
+        l.loan_no,
+        l.origin_pbs_name
+      ].filter(Boolean).join(' ').toLowerCase();
+      return text.includes(searchQuery);
+    });
+  }
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="9" class="p-6 text-center text-gray-500 font-medium bg-gray-50/50">
+          এই ফিল্টারে কোনো ঋণগ্রহীতা নেই।
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map((item, idx) => renderBorrowerSnapshotRow(item, idx)).join('');
+}
+
+async function loadCurrentMonthDeductionSnapshot() {
+  try {
+    const now = new Date();
+    const currentMonth = now.toISOString().slice(0, 7);
+    const [yyyy, mm] = currentMonth.split('-');
+    const monthNamesBn = ['জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন', 'জুলাই', 'আগস্ট', 'সেপ্টেম্বর', 'অক্টোবর', 'নভেম্বর', 'ডিসেম্বর'];
+    const currentMonthText = `${monthNamesBn[parseInt(mm, 10) - 1]} ${toBn(yyyy)}`;
+
+    const dashMonthBadge = document.getElementById('dashBorrowerSnapshotMonth');
+    if (dashMonthBadge) dashMonthBadge.textContent = currentMonthText;
+
+    const dedMonthBadge = document.getElementById('deductionsBorrowerSnapshotMonth');
+    if (dedMonthBadge) dedMonthBadge.textContent = currentMonthText;
+
+    const [loansRes, repRes] = await Promise.all([
+      API.get('/loans'),
+      API.get('/repayments', { month: currentMonth })
+    ]);
+
+    if (loansRes.success) {
+      state.loans = loansRes.loans || [];
+    }
+
+    const allActiveLoans = (loansRes?.loans || state.loans || []).filter(l => l.status === 'ACTIVE');
+    const monthRepayments = repRes?.repayments || [];
+
+    renderDashboardBorrowerSnapshot(allActiveLoans, monthRepayments);
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    console.error('loadCurrentMonthDeductionSnapshot error:', err);
+  }
+}
+
+function switchDeductionsSubtab(subtab) {
+  const statusBtn = document.getElementById('subtabBtnDeductionsStatus');
+  const historyBtn = document.getElementById('subtabBtnDeductionsHistory');
+
+  const statusContent = document.getElementById('subtabContentDeductionsStatus');
+  const historyContent = document.getElementById('subtabContentDeductionsHistory');
+
+  state.activeDeductionsSubtab = subtab || 'current_month_status';
+
+  if (statusBtn) statusBtn.classList.toggle('is-active', subtab === 'current_month_status');
+  if (historyBtn) historyBtn.classList.toggle('is-active', subtab === 'history');
+
+  if (statusContent) statusContent.classList.toggle('hidden', subtab !== 'current_month_status');
+  if (historyContent) historyContent.classList.toggle('hidden', subtab !== 'history');
+
+  if (subtab === 'current_month_status') {
+    loadCurrentMonthDeductionSnapshot();
+  } else {
+    loadRepayments();
+  }
+
+  if (window.lucide) lucide.createIcons();
+}
+
+async function loadDeductionsTab() {
+  const activeSubtab = state.activeDeductionsSubtab || 'current_month_status';
+  switchDeductionsSubtab(activeSubtab);
+  if (activeSubtab === 'current_month_status') {
+    loadRepayments();
+  } else {
+    loadCurrentMonthDeductionSnapshot();
   }
 }
 
@@ -1076,33 +1620,32 @@ async function loadEmployees() {
 
     res.employees.forEach(emp => {
       const tr = document.createElement('tr');
-      tr.className = 'hover:bg-gray-50';
       tr.innerHTML = `
-        <td class="p-3.5 font-bold font-mono text-emerald-800">${emp.emp_code}</td>
-        <td class="p-3.5">
-          <div class="font-bold text-gray-900">${emp.name}</div>
-          <div class="text-xs text-gray-500">${emp.designation} (${emp.mobile || 'মোবাইল নেই'})</div>
+        <td class="font-bold font-mono text-emerald-800">${emp.emp_code}</td>
+        <td>
+          <div class="font-bold text-gray-900 leading-tight">${emp.name}</div>
+          <div class="text-[11px] text-gray-500 leading-none mt-0.5">${emp.designation} (${emp.mobile || 'মোবাইল নেই'})</div>
         </td>
-        <td class="p-3.5">
-          <div class="text-xs font-semibold text-gray-700">${emp.department}</div>
-          <div class="text-xs text-gray-400">${emp.current_posting_pbs || 'নিজস্ব পবিস'}</div>
+        <td>
+          <div class="text-xs font-semibold text-gray-700 leading-tight">${emp.department}</div>
+          <div class="text-[11px] text-gray-400 leading-none mt-0.5">${emp.current_posting_pbs || 'নিজস্ব পবিস'}</div>
         </td>
-        <td class="p-3.5 text-center font-bold">
-          <span class="px-2.5 py-1 rounded-full text-xs ${emp.active_loans_count > 0 ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600'}">
+        <td class="text-center font-bold">
+          <span class="px-2 py-0.5 rounded-full text-[11px] ${emp.active_loans_count > 0 ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600'}">
             ${toBn(emp.active_loans_count)} টি
           </span>
         </td>
-        <td class="p-3.5 text-right font-bold text-gray-900">${formatBDT(emp.total_principal_balance)}</td>
-        <td class="p-3.5 text-right font-bold text-amber-700">${formatBDT(emp.total_interest_balance)}</td>
-        <td class="p-3.5 text-right font-semibold text-emerald-800">${formatBDT(emp.total_monthly_installment)}</td>
-        <td class="p-3.5 text-center">
-          <div class="flex items-center justify-center space-x-1.5">
-            <button onclick="viewEmployeeLoans(${emp.id})" class="text-xs text-emerald-700 hover:text-emerald-900 font-semibold px-2 py-1 bg-emerald-50 hover:bg-emerald-100 rounded transition" title="ঋণ দেখুন">ঋণ দেখুন</button>
-            <button onclick="openEmployeeModal(${emp.id})" class="p-1 text-blue-600 hover:bg-blue-100 rounded transition" title="কর্মচারী তথ্য সম্পাদন">
-              <i data-lucide="edit-3" class="w-4 h-4"></i>
+        <td class="text-right font-bold text-gray-900 font-mono">${formatBDT(emp.total_principal_balance)}</td>
+        <td class="text-right font-bold text-amber-700 font-mono">${formatBDT(emp.total_interest_balance)}</td>
+        <td class="text-right font-semibold text-emerald-800 font-mono">${formatBDT(emp.total_monthly_installment)}</td>
+        <td class="text-center">
+          <div class="flex items-center justify-center space-x-1">
+            <button onclick="viewEmployeeLoans(${emp.id})" class="text-[11px] text-emerald-700 hover:text-emerald-900 font-bold px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded transition" title="ঋণ দেখুন">ঋণ দেখুন</button>
+            <button onclick="openEmployeeModal(${emp.id})" class="p-0.5 text-blue-600 hover:bg-blue-100 rounded transition" title="কর্মচারী তথ্য সম্পাদন">
+              <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
             </button>
-            <button onclick="deleteEmployeeRecord(${emp.id})" class="p-1 text-red-500 hover:bg-red-100 rounded transition" title="মুছে ফেলুন">
-              <i data-lucide="trash-2" class="w-4 h-4"></i>
+            <button onclick="deleteEmployeeRecord(${emp.id})" class="p-0.5 text-red-500 hover:bg-red-100 rounded transition" title="মুছে ফেলুন">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
             </button>
           </div>
         </td>
@@ -1329,57 +1872,66 @@ async function loadLoans() {
       const isOwn = loan.loan_source_type === 'OWN_PBS';
 
       const tr = document.createElement('tr');
-      tr.className = 'hover:bg-gray-50';
       tr.innerHTML = `
-        <td class="p-3.5">
-          <div class="font-bold text-gray-900">${loan.loan_no}</div>
-          <div class="text-xs text-gray-500">${loan.loan_lot_name}</div>
+        <td>
+          <div class="font-bold text-gray-900 leading-tight font-mono text-xs">${loan.loan_no}</div>
+          <div class="text-[11px] text-gray-500 leading-none mt-0.5">${loan.loan_lot_name}</div>
         </td>
-        <td class="p-3.5">
-          <div class="font-bold text-gray-800">${loan.emp_name}</div>
-          <div class="text-xs text-gray-500">${loan.emp_code} &bull; ${loan.designation}</div>
+        <td>
+          <div class="font-bold text-gray-800 leading-tight">${loan.emp_name}</div>
+          <div class="text-[11px] text-gray-500 leading-none mt-0.5">${loan.emp_code} &bull; ${loan.designation}</div>
         </td>
-        <td class="p-3.5">
-          <span class="inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${isOwn ? 'badge-own' : 'badge-other'}">
+        <td>
+          <span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold ${isOwn ? 'badge-own' : 'badge-other'}">
             ${loan.origin_pbs_name}
           </span>
-          ${isOwn && loan.disbursement_date ? `<div class="text-xs text-gray-500 mt-0.5">বিতরণ: ${toBn(loan.disbursement_date)}</div>` : ''}
+          ${isOwn && loan.disbursement_date ? `<div class="text-[10px] text-gray-500 leading-none mt-0.5">বিতরণ: ${toBn(loan.disbursement_date)}</div>` : ''}
         </td>
-        <td class="p-3.5 text-center">
+        <td class="text-center">
           ${isOwn ? `
-            <span class="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
+            <span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
               ${toBn(loan.interest_rate || 7)}%
             </span>
-            <div class="text-[10px] text-gray-400">ব্যালেন্স সুদ (পূর্বে ৮%)</div>
           ` : `
-            <span class="px-2 py-0.5 rounded-full text-[11px] bg-gray-100 text-gray-600 font-medium">প্রভিশন মুক্ত</span>
+            <span class="px-2 py-0.5 rounded-full text-[10px] bg-gray-100 text-gray-600 font-medium">প্রভিশন মুক্ত</span>
           `}
         </td>
-        <td class="p-3.5 text-right font-bold text-gray-900">${formatBDT(loan.disbursed_amount)}</td>
-        <td class="p-3.5 text-right font-bold text-blue-800">${formatBDT(loan.principal_balance)}</td>
-        <td class="p-3.5 text-right font-bold text-amber-700">
+        <td class="text-right font-bold text-gray-900 font-mono">${formatBDT(loan.disbursed_amount)}</td>
+        <td class="text-right font-bold text-blue-800 font-mono">
+          ${loan.principal_balance === 0 && loan.status === 'ACTIVE'
+            ? `<span class="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-xs">পরিশোধিত (০.০০)</span>`
+            : formatBDT(loan.principal_balance)
+          }
+        </td>
+        <td class="text-right font-bold text-amber-700 font-mono">
           ${formatBDT(loan.interest_balance)}
-          ${loan.advance_balance > 0 ? `<div class="text-[10px] font-semibold text-blue-700 mt-0.5">অগ্রিম: ${formatBDT(loan.advance_balance)}</div>` : ''}
+          ${loan.advance_balance > 0 ? `<div class="text-[10px] font-semibold text-blue-700 mt-0.5 font-mono">অগ্রিম: ${formatBDT(loan.advance_balance)}</div>` : ''}
         </td>
-        <td class="p-3.5 text-center">
-          <span class="px-2 py-0.5 rounded-full text-xs font-medium ${loan.status === 'ACTIVE' ? 'badge-active' : 'badge-closed'}">
-            ${loan.status === 'ACTIVE' ? 'সক্রিয়' : 'পরিশোধিত'}
-          </span>
-          ${loan.salary_deduction_suspended ? '<div class="mt-1 text-[10px] font-bold text-rose-700">বেতন কর্তন স্থগিত</div>' : ''}
+        <td class="text-center">
+          ${loan.principal_balance === 0 && loan.interest_balance > 0 && loan.status === 'ACTIVE'
+            ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">সুদ আদায় চলমান</span>`
+            : `<span class="px-2 py-0.5 rounded-full text-[11px] font-medium ${loan.status === 'ACTIVE' ? 'badge-active' : 'badge-closed'}">
+                ${loan.status === 'ACTIVE' ? 'সক্রিয়' : 'পরিশোধিত'}
+              </span>`
+          }
+          ${loan.salary_deduction_suspended ? '<div class="mt-0.5 text-[10px] font-bold text-rose-700 leading-none">কর্তন স্থগিত</div>' : ''}
         </td>
-        <td class="p-3.5 text-center">
-          <div class="flex items-center justify-center space-x-1.5">
+        <td class="text-center">
+          <div class="flex items-center justify-center space-x-1">
             ${loan.status === 'ACTIVE' ? `
-              <button onclick="toggleLoanSalaryDeduction(${loan.id}, ${!loan.salary_deduction_suspended})" class="px-2 py-1 ${loan.salary_deduction_suspended ? 'bg-blue-700 hover:bg-blue-800' : 'bg-rose-700 hover:bg-rose-800'} text-white rounded text-[10px] font-bold whitespace-nowrap" title="${loan.salary_deduction_suspended ? 'বেতন কর্তন পুনরায় চালু করুন' : 'বেতন কর্তন স্থগিত করুন'}">
-                ${loan.salary_deduction_suspended ? 'কর্তন চালু' : 'কর্তন স্থগিত'}
+              <button onclick="openLoanInstallmentPostingModal(${loan.id})" class="px-1.5 py-0.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-[10px] font-bold shadow-2xs transition whitespace-nowrap cursor-pointer" title="কিস্তি বা জমা পোস্টিং">
+                পোস্টিং
+              </button>
+              <button onclick="toggleLoanSalaryDeduction(${loan.id}, ${!loan.salary_deduction_suspended})" class="px-1.5 py-0.5 ${loan.salary_deduction_suspended ? 'bg-blue-700 hover:bg-blue-800' : 'bg-rose-700 hover:bg-rose-800'} text-white rounded text-[10px] font-bold whitespace-nowrap cursor-pointer" title="${loan.salary_deduction_suspended ? 'বেতন কর্তন পুনরায় চালু করুন' : 'বেতন কর্তন স্থগিত করুন'}">
+                ${loan.salary_deduction_suspended ? 'চালু' : 'স্থগিত'}
               </button>
             ` : ''}
-            <button onclick="openEditLoanModal(${loan.id})" class="p-1 text-blue-600 hover:bg-blue-100 rounded transition" title="ঋণ তথ্য সম্পাদন (Edit)">
-              <i data-lucide="edit-3" class="w-4 h-4"></i>
+            <button onclick="openEditLoanModal(${loan.id})" class="p-0.5 text-blue-600 hover:bg-blue-100 rounded transition" title="ঋণ তথ্য সম্পাদন (Edit)">
+              <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
             </button>
-            <button onclick="viewLoanLedger(${loan.id})" class="p-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded text-xs font-semibold">লেজার</button>
-            <button onclick="deleteLoanRecord(${loan.id})" class="p-1 text-red-500 hover:bg-red-100 rounded transition text-xs" title="ডিলিট (রিসাইকেল বিনে পাঠান)">
-              <i data-lucide="trash-2" class="w-4 h-4"></i>
+            <button onclick="viewLoanLedger(${loan.id})" class="px-1.5 py-0.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 rounded text-[11px] font-semibold">লেজার</button>
+            <button onclick="deleteLoanRecord(${loan.id})" class="p-0.5 text-red-500 hover:bg-red-100 rounded transition" title="ডিলিট (রিসাইকেল বিনে পাঠান)">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
             </button>
           </div>
         </td>
@@ -1395,6 +1947,80 @@ async function loadLoans() {
   }
 }
 
+function toggleLoanOpeningBalanceFields() {
+  const cb = document.getElementById('loanHasOpeningBalanceCb');
+  const div = document.getElementById('loanOpeningBalanceFieldsDiv');
+  const isChecked = Boolean(cb && cb.checked);
+  if (div) {
+    div.classList.toggle('hidden', !isChecked);
+  }
+  if (isChecked) {
+    const disbAmount = parseFloat(document.getElementById('loanDisbursedAmount')?.value || 0);
+    const openPrinInput = document.getElementById('loanOpeningPrincipal');
+    const openDateInput = document.getElementById('loanOpeningDate');
+    if (openPrinInput && openPrinInput.value === '' && disbAmount > 0) {
+      openPrinInput.placeholder = `যেমন: 0 অথবা অবশিষ্ট আসল`;
+    }
+    if (openDateInput && !openDateInput.value) {
+      const disbDate = document.getElementById('loanDisbursementDate')?.value;
+      if (disbDate) openDateInput.value = disbDate;
+    }
+    updateOpeningBalanceLiveHint();
+  }
+}
+
+function updateOpeningBalanceLiveHint() {
+  const cb = document.getElementById('loanHasOpeningBalanceCb');
+  const hintEl = document.getElementById('loanOpeningLiveHint');
+  if (!cb || !cb.checked || !hintEl) {
+    if (hintEl) hintEl.classList.add('hidden');
+    return;
+  }
+
+  const disbAmount = parseFloat(document.getElementById('loanDisbursedAmount')?.value || 0);
+  const openPrinVal = document.getElementById('loanOpeningPrincipal')?.value;
+  const openIntVal = document.getElementById('loanOpeningInterest')?.value;
+
+  if (openPrinVal === '' && openIntVal === '') {
+    hintEl.classList.add('hidden');
+    return;
+  }
+
+  const openPrin = parseFloat(openPrinVal || 0);
+  const openInt = parseFloat(openIntVal || 0);
+  const priorPaid = Math.max(0, disbAmount - openPrin);
+
+  hintEl.classList.remove('hidden');
+
+  if (openPrin === 0 && disbAmount > 0) {
+    hintEl.className = 'p-2.5 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-900 border border-emerald-300 leading-relaxed';
+    hintEl.innerHTML = `
+      <div class="font-bold flex items-center space-x-1 text-emerald-800">
+        <span>🎉 আসল সম্পূর্ণ পরিশোধিত (${formatBDT(disbAmount)} টাকা)!</span>
+      </div>
+      <p class="mt-1 text-[11px] text-emerald-900 leading-normal">
+        • সফটওয়্যারে নতুন করে আর কোনো সুদ প্রবিশন/ধার্য হবে না (০%)।<br>
+        • অবশিষ্ট সুদ স্থিতি <strong>${formatBDT(openInt)} টাকা</strong> হতে প্রতি মাসে কিস্তি কর্তন করে সমন্বয় করা হবে।<br>
+        • লেজারে শুরুতেই পূর্বের আসল সম্পূর্ণ পরিশোধ দেখানো হবে এবং সুদ আদায়ের চলমান স্থিতি সংরক্ষিত থাকবে।
+      </p>
+    `;
+  } else if (openPrin > 0) {
+    hintEl.className = 'p-2.5 rounded-lg text-xs font-medium bg-blue-50 text-blue-900 border border-blue-300 leading-relaxed';
+    hintEl.innerHTML = `
+      <div class="font-bold flex items-center space-x-1 text-blue-900">
+        <span>📊 আংশিক আসল পরিশোধিত সমন্বয়:</span>
+      </div>
+      <p class="mt-1 text-[11px] text-blue-800 leading-normal">
+        • ম্যানুয়াল কাগজের লেজারে ইতোমধ্যে পরিশোধিত আসল: <strong>${formatBDT(priorPaid)} টাকা</strong>।<br>
+        • সফটওয়্যারে বর্তমান প্রারম্ভিক আসল: <strong>${formatBDT(openPrin)} টাকা</strong> এবং সুদ স্থিতি: <strong>${formatBDT(openInt)} টাকা</strong>।<br>
+        • পরবর্তী প্রতি মাসের সুদ শুধুমাত্র অবশিষ্ট <strong>${formatBDT(openPrin)} টাকার</strong> ওপর হ্রাসকৃত হারে (reducing balance) নিখুঁতভাবে গণনা হবে।
+      </p>
+    `;
+  } else {
+    hintEl.classList.add('hidden');
+  }
+}
+
 async function openNewLoanModal() {
   const form = document.getElementById('newLoanForm');
   if (form) form.reset();
@@ -1406,6 +2032,20 @@ async function openNewLoanModal() {
     loanNoInput.readOnly = true;
     loanNoInput.classList.add('bg-gray-50');
   }
+
+  // Reset opening balance fields
+  const openingCb = document.getElementById('loanHasOpeningBalanceCb');
+  if (openingCb) openingCb.checked = false;
+  const openingDiv = document.getElementById('loanOpeningBalanceFieldsDiv');
+  if (openingDiv) openingDiv.classList.add('hidden');
+  const openPrin = document.getElementById('loanOpeningPrincipal');
+  if (openPrin) openPrin.value = '';
+  const openInt = document.getElementById('loanOpeningInterest');
+  if (openInt) openInt.value = '';
+  const openDate = document.getElementById('loanOpeningDate');
+  if (openDate) openDate.value = '';
+  const openHint = document.getElementById('loanOpeningLiveHint');
+  if (openHint) openHint.classList.add('hidden');
 
   const titleEl = document.getElementById('loanModalTitle');
   if (titleEl) {
@@ -1557,6 +2197,45 @@ async function openEditLoanModal(loanId) {
   const remarks = document.getElementById('loanRemarks');
   if (remarks) remarks.value = loan.remarks || '';
 
+  // Pre-fill opening balance fields if loan transitioned from manual paper ledger
+  const openingCb = document.getElementById('loanHasOpeningBalanceCb');
+  const openingDiv = document.getElementById('loanOpeningBalanceFieldsDiv');
+  const openPrin = document.getElementById('loanOpeningPrincipal');
+  const openInt = document.getElementById('loanOpeningInterest');
+  const openDate = document.getElementById('loanOpeningDate');
+
+  const hasOpening = Boolean(
+    loan.opening_balance_as_of ||
+    (loan.opening_principal_balance !== null && loan.opening_principal_balance !== undefined) ||
+    (loan.total_principal_paid > 0 && loan.principal_balance < loan.disbursed_amount)
+  );
+
+  if (openingCb) openingCb.checked = hasOpening;
+  if (openingDiv) openingDiv.classList.toggle('hidden', !hasOpening);
+
+  if (hasOpening) {
+    if (openPrin) {
+      openPrin.value = (loan.opening_principal_balance !== null && loan.opening_principal_balance !== undefined)
+        ? loan.opening_principal_balance
+        : loan.principal_balance;
+    }
+    if (openInt) {
+      openInt.value = (loan.opening_interest_balance !== null && loan.opening_interest_balance !== undefined)
+        ? loan.opening_interest_balance
+        : loan.interest_balance;
+    }
+    if (openDate) {
+      openDate.value = loan.opening_balance_as_of || loan.disbursement_date || '';
+    }
+    updateOpeningBalanceLiveHint();
+  } else {
+    if (openPrin) openPrin.value = '';
+    if (openInt) openInt.value = '';
+    if (openDate) openDate.value = '';
+    const openHint = document.getElementById('loanOpeningLiveHint');
+    if (openHint) openHint.classList.add('hidden');
+  }
+
   openModal('newLoanModal');
   if (window.lucide) lucide.createIcons();
 }
@@ -1700,6 +2379,7 @@ async function deleteSelectedRepayments() {
       await loadRepayments();
       loadLoans();
       if (typeof loadDashboard === 'function') loadDashboard();
+      if (typeof loadCurrentMonthDeductionSnapshot === 'function') loadCurrentMonthDeductionSnapshot();
 
       Swal.fire({
         icon: 'success',
@@ -1798,40 +2478,46 @@ function renderRepaymentRows(repayments) {
 
     const tr = document.createElement('tr');
     tr.id = `repayment-row-${rep.id}`;
-    tr.className = `hover:bg-gray-50 transition ${isSelected ? 'bg-rose-50/70' : ''}`;
+    tr.className = isSelected ? 'bg-rose-50/70' : '';
     tr.innerHTML = `
-        <td class="p-3.5 text-center">
-          <input type="checkbox" data-id="${rep.id}" class="repayment-row-cb rounded text-rose-600 focus:ring-rose-500 cursor-pointer w-4 h-4" ${isSelected ? 'checked' : ''} onchange="toggleRepaymentSelection(${rep.id}, this.checked)">
+        <td class="text-center">
+          <input type="checkbox" data-id="${rep.id}" class="repayment-row-cb rounded text-rose-600 focus:ring-rose-500 cursor-pointer w-3.5 h-3.5" ${isSelected ? 'checked' : ''} onchange="toggleRepaymentSelection(${rep.id}, this.checked)">
         </td>
-        <td class="p-3.5">
-          <div class="font-bold text-gray-900">${toBn(rep.deduction_month)}</div>
-          <div class="text-xs text-gray-500">${toBn(rep.deduction_date)}</div>
+        <td>
+          <div class="font-bold text-gray-900 leading-tight">${toBn(rep.deduction_month)}</div>
+          <div class="text-[11px] text-gray-500 leading-none mt-0.5">${toBn(rep.deduction_date)}</div>
         </td>
-        <td class="p-3.5">
-          <div class="font-bold text-gray-800">${rep.emp_name}</div>
-          <div class="text-xs text-gray-500">${rep.emp_code} &bull; ${rep.designation}</div>
+        <td>
+          <div class="font-bold text-gray-800 leading-tight">${rep.emp_name}</div>
+          <div class="text-[11px] text-gray-500 leading-none mt-0.5">${rep.emp_code} &bull; ${rep.designation}</div>
         </td>
-        <td class="p-3.5">
-          <div class="font-medium text-xs text-gray-800">${rep.loan_no}</div>
-          <span class="inline-block px-1.5 py-0.5 rounded text-[10px] ${isOther ? 'badge-other' : 'badge-own'}">
+        <td>
+          <div class="font-medium text-xs text-gray-800 font-mono leading-tight">${rep.loan_no}</div>
+          <span class="inline-block px-1.5 py-0.2 rounded text-[10px] ${isOther ? 'badge-other' : 'badge-own'} mt-0.5">
             ${rep.origin_pbs_name}
           </span>
+        <td class="text-right font-bold text-gray-900 font-mono">
+          <div>${formatBDT(rep.total_amount)}</div>
+          ${rep.repayment_method && rep.repayment_method !== 'SALARY_DEDUCTION' ? `
+            <span class="inline-block px-1 py-0.2 rounded text-[9px] font-bold bg-blue-100 text-blue-800">
+              ${rep.repayment_method === 'BANK_DEPOSIT' ? 'ব্যাংক জমা' : (rep.repayment_method === 'CASH' ? 'নগদ জমা' : 'এককালীন সমন্বয়')}
+            </span>
+          ` : ''}
         </td>
-        <td class="p-3.5 text-right font-bold text-gray-900">${formatBDT(rep.total_amount)}</td>
-        <td class="p-3.5 text-right font-bold text-emerald-700">${formatBDT(rep.principal_paid)}</td>
-        <td class="p-3.5 text-right font-bold text-amber-700">${formatBDT(rep.interest_paid)}</td>
-        <td class="p-3.5 text-center">
+        <td class="text-right font-bold text-emerald-700 font-mono">${formatBDT(rep.principal_paid)}</td>
+        <td class="text-right font-bold text-amber-700 font-mono">${formatBDT(rep.interest_paid)}</td>
+        <td class="text-center">
           ${isOther ? `
             <span class="px-2 py-0.5 rounded-full text-[11px] font-semibold ${rep.remittance_status === 'REMITTED' ? 'bg-emerald-100 text-emerald-800' : 'bg-purple-100 text-purple-800'}">
-              ${rep.remittance_status === 'REMITTED' ? 'প্রেরিত (Remitted)' : 'অনিষ্পন্ন (Pending)'}
+              ${rep.remittance_status === 'REMITTED' ? 'প্রেরিত' : 'অনিষ্পন্ন'}
             </span>
           ` : `
-            <span class="text-xs text-gray-400">নিজস্ব পবিস জমা</span>
+            <span class="text-[11px] text-gray-400">নিজস্ব পবিস জমা</span>
           `}
         </td>
-        <td class="p-3.5 text-center">
-          <button onclick="deleteRepaymentRecord(${rep.id})" class="text-red-500 hover:text-red-700 p-1" title="ডিলিট ও ব্যালেন্স রিভার্স">
-            <i data-lucide="trash-2" class="w-4 h-4"></i>
+        <td class="text-center">
+          <button onclick="deleteRepaymentRecord(${rep.id})" class="text-red-500 hover:text-red-700 p-0.5" title="ডিলিট ও ব্যালেন্স রিভার্স">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
           </button>
         </td>
     `;
@@ -1842,27 +2528,1089 @@ function renderRepaymentRows(repayments) {
   if (window.lucide) lucide.createIcons();
 }
 
-function populateRepaymentLoanDropdowns() {
-  const select = document.getElementById('deductionLoanSelect');
-  if (!select) return;
-  select.innerHTML = '<option value="">ঋণ হিসাব নম্বর নির্বাচন করুন</option>';
-  state.loans.filter(l => l.status === 'ACTIVE').forEach(l => {
-    select.innerHTML += `<option value="${l.id}">${l.loan_no} - ${l.emp_name} (আসল স্থিতি: ${formatBDT(l.principal_balance)}, সুদ: ${formatBDT(l.interest_balance)})</option>`;
+let multiMonthSchedule = [];
+let currentDeductionModalTab = 'single';
+
+function getMonthsRange(startMonth, endMonth) {
+  const result = [];
+  if (!startMonth || !endMonth) return result;
+  let [sY, sM] = startMonth.split('-').map(Number);
+  const [eY, eM] = endMonth.split('-').map(Number);
+  if (sY > eY || (sY === eY && sM > eM)) return result;
+
+  while (sY < eY || (sY === eY && sM <= eM)) {
+    const mm = String(sM).padStart(2, '0');
+    result.push(`${sY}-${mm}`);
+    sM++;
+    if (sM > 12) {
+      sM = 1;
+      sY++;
+    }
+  }
+  return result;
+}
+
+function formatMonthYearBanglaBadge(ymStr) {
+  if (!ymStr || ymStr.length < 7) return '';
+  const [yr, mon] = ymStr.split('-');
+  const monNum = parseInt(mon, 10);
+  const months = [
+    'জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন',
+    'জুলাই', 'আগস্ট', 'সেপ্টেম্বর', 'অক্টোবর', 'নভেম্বর', 'ডিসেম্বর'
+  ];
+  const monName = months[monNum - 1] || mon;
+  return `(${monName}/${toBengaliDigits(yr)})`;
+}
+
+function switchDeductionModalTab(tab = 'single') {
+  currentDeductionModalTab = tab;
+  const btnSingle = document.getElementById('deductionTabBtnSingle');
+  const btnMulti = document.getElementById('deductionTabBtnMulti');
+  const contentSingle = document.getElementById('deductionSingleTabContent');
+  const contentMulti = document.getElementById('deductionMultiTabContent');
+  const hintEl = document.getElementById('deductionTabHint');
+
+  if (tab === 'single') {
+    if (btnSingle) {
+      btnSingle.className = 'flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 transition bg-white text-gray-900 shadow-xs border border-gray-200 cursor-pointer';
+    }
+    if (btnMulti) {
+      btnMulti.className = 'flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center justify-center space-x-2 transition text-gray-600 hover:text-gray-900 cursor-pointer';
+    }
+    if (contentSingle) contentSingle.classList.remove('hidden');
+    if (contentMulti) contentMulti.classList.add('hidden');
+    if (hintEl) hintEl.textContent = 'একক মাসের নিয়মিত বেতন কর্তন, ব্যাংক জমা বা সমন্বয় পোস্টিং';
+  } else {
+    if (btnSingle) {
+      btnSingle.className = 'flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-semibold flex items-center justify-center space-x-2 transition text-gray-600 hover:text-gray-900 cursor-pointer';
+    }
+    if (btnMulti) {
+      btnMulti.className = 'flex-1 py-2 px-3 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 transition bg-white text-gray-900 shadow-xs border border-gray-200 cursor-pointer';
+    }
+    if (contentSingle) contentSingle.classList.add('hidden');
+    if (contentMulti) contentMulti.classList.remove('hidden');
+    if (hintEl) hintEl.textContent = 'অন্যান্য পবিস থেকে এককালীন একাধিক মাসের টাকা আসলে মাল্টি-মান্থ ব্যবহার করুন';
+
+    const multiSel = document.getElementById('multiSourcePbsSelect');
+    if (multiSel && multiSel.options.length <= 1) {
+      populateRepaymentLoanDropdowns();
+    }
+
+    const loanId = document.getElementById('deductionLoanSelect')?.value;
+    const loan = state.loans?.find(l => l.id == loanId);
+    if (loan && (!multiMonthSchedule || multiMonthSchedule.length === 0)) {
+      initMultiMonthScheduleForSelectedLoan(loan);
+    } else {
+      recalculateMultiMonthSchedule();
+    }
+  }
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function focusBorrowerSelect(event) {
+  toggleBorrowerSearchDropdown(event);
+}
+
+function toggleBorrowerSearchDropdown(event) {
+  if (event) event.stopPropagation();
+  const menu = document.getElementById('deductionBorrowerDropdownMenu');
+  if (!menu) return;
+  const isHidden = menu.classList.contains('hidden');
+  if (isHidden) {
+    menu.classList.remove('hidden');
+    renderBorrowerDropdownItems();
+    const input = document.getElementById('deductionBorrowerSearchInput');
+    if (input) {
+      input.value = '';
+      setTimeout(() => input.focus(), 50);
+    }
+  } else {
+    menu.classList.add('hidden');
+  }
+}
+
+function filterBorrowerDropdownList(query) {
+  renderBorrowerDropdownItems(query);
+}
+
+function renderBorrowerDropdownItems(query = '') {
+  const container = document.getElementById('deductionBorrowerItemsList');
+  if (!container) return;
+
+  const activeLoans = (state.loans || []).filter(l => l.status === 'ACTIVE');
+  const q = (query || '').toLowerCase().trim();
+
+  const filtered = q
+    ? activeLoans.filter(l =>
+        (l.emp_name && l.emp_name.toLowerCase().includes(q)) ||
+        (l.emp_code && l.emp_code.toLowerCase().includes(q)) ||
+        (l.loan_no && l.loan_no.toLowerCase().includes(q)) ||
+        (l.designation && l.designation.toLowerCase().includes(q))
+      )
+    : activeLoans;
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<div class="p-3 text-center text-gray-400">কোনো ঋণ হিসাব পাওয়া যায়নি</div>';
+    return;
+  }
+
+  const currentLoanId = document.getElementById('deductionLoanSelect')?.value;
+
+  container.innerHTML = filtered.map(l => {
+    const isSelected = (l.id == currentLoanId);
+    return `
+      <div onclick="selectDeductionBorrower(${l.id})" class="p-2.5 hover:bg-emerald-50 rounded-lg cursor-pointer transition flex items-center justify-between gap-2 ${isSelected ? 'bg-emerald-50/80 font-bold' : ''}">
+        <div>
+          <div class="flex items-center space-x-1.5">
+            <span class="px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-100 text-gray-800">${l.emp_code || '-'}</span>
+            <span class="font-bold text-gray-900">${l.emp_name}</span>
+          </div>
+          <div class="text-[11px] text-gray-500 mt-0.5">
+            ${l.loan_no} | কিস্তি: ${formatBDT(l.monthly_installment || 0)}
+          </div>
+        </div>
+        <div class="text-right text-[11px]">
+          <div class="text-gray-700">আসল: ${formatBDT(l.principal_balance)}</div>
+          <div class="text-blue-700">সুদ: ${formatBDT(l.interest_balance)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectDeductionBorrower(loanId) {
+  const hiddenInput = document.getElementById('deductionLoanSelect');
+  if (hiddenInput) {
+    hiddenInput.value = loanId;
+  }
+  const menu = document.getElementById('deductionBorrowerDropdownMenu');
+  if (menu) menu.classList.add('hidden');
+  onDeductionBorrowerSelected();
+}
+
+function onDeductionBorrowerSelected() {
+  const loanId = document.getElementById('deductionLoanSelect')?.value;
+  const card = document.getElementById('deductionSelectedBorrowerCard');
+  if (!loanId) {
+    if (card) card.classList.add('hidden');
+    updateDeductionPreview();
+    return;
+  }
+
+  const loan = state.loans?.find(l => l.id == loanId);
+  if (!loan) {
+    if (card) card.classList.add('hidden');
+    return;
+  }
+
+  if (card) card.classList.remove('hidden');
+
+  const empBadge = document.getElementById('deductionEmpCodeBadge');
+  if (empBadge) empBadge.textContent = loan.emp_code || '-';
+
+  const empName = document.getElementById('deductionEmpName');
+  if (empName) empName.textContent = loan.emp_name || '-';
+
+  const empDesig = document.getElementById('deductionEmpDesig');
+  if (empDesig) empDesig.textContent = loan.designation ? `(${loan.designation})` : '';
+
+  const loanNo = document.getElementById('deductionLoanNo');
+  if (loanNo) loanNo.textContent = loan.loan_no || '-';
+
+  const originPbs = document.getElementById('deductionOriginPbsName');
+  if (originPbs) originPbs.textContent = loan.origin_pbs_name || 'গাজীপুর পল্লী বিদ্যুৎ সমিতি-২';
+
+  const typeBadge = document.getElementById('deductionLoanTypeBadge');
+  if (typeBadge) {
+    const isOther = loan.loan_source_type === 'OTHER_PBS';
+    typeBadge.textContent = isOther ? 'অন্য পবিস ঋণ' : 'নিজ পবিস ঋণ';
+    typeBadge.className = isOther
+      ? 'px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-800 border border-purple-200'
+      : 'px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-800 border border-blue-200';
+  }
+
+  const prinEl = document.getElementById('deductionCardPrincipal');
+  if (prinEl) prinEl.textContent = formatBDT(loan.principal_balance);
+
+  const intEl = document.getElementById('deductionCardInterest');
+  if (intEl) intEl.textContent = formatBDT(loan.interest_balance);
+
+  const advEl = document.getElementById('deductionCardAdvance');
+  if (advEl) advEl.textContent = formatBDT(loan.advance_balance || 0);
+
+  const instEl = document.getElementById('deductionCardInstallment');
+  if (instEl) instEl.textContent = formatBDT(loan.monthly_installment || 0);
+
+  const amountInput = document.getElementById('deductionAmountInput');
+  if (amountInput && (!amountInput.value || parseFloat(amountInput.value) <= 0)) {
+    amountInput.value = loan.monthly_installment || '';
+  }
+
+  const multiSourceSelect = document.getElementById('multiSourcePbsSelect');
+  const singleSourceSelect = document.getElementById('singleSourcePbsSelect');
+  const ownPbsName = state.pbsSettings?.pbs_name || 'গাজীপুর পল্লী বিদ্যুৎ সমিতি-২';
+
+  let targetPbs = loan.current_posting_pbs || '';
+  if (!targetPbs && typeof transferredLoansData !== 'undefined' && transferredLoansData?.records) {
+    const rec = transferredLoansData.records.find(r => r.loanId == loan.id);
+    if (rec && rec.currentPostingPbs) targetPbs = rec.currentPostingPbs;
+  }
+  if (!targetPbs && state.employees) {
+    const emp = state.employees.find(e => e.id == loan.employee_id || e.emp_code == loan.emp_code);
+    if (emp && emp.current_posting_pbs) targetPbs = emp.current_posting_pbs;
+  }
+  if (!targetPbs && loan.loan_source_type === 'OTHER_PBS') {
+    targetPbs = loan.origin_pbs_name || '';
+  }
+
+  [multiSourceSelect, singleSourceSelect].forEach(sel => {
+    if (!sel) return;
+    if (targetPbs && targetPbs !== 'নিজস্ব পবিস' && targetPbs !== ownPbsName) {
+      const exists = Array.from(sel.options).some(o => o.value === targetPbs);
+      if (!exists) {
+        const opt = document.createElement('option');
+        opt.value = targetPbs;
+        opt.textContent = targetPbs;
+        sel.appendChild(opt);
+      }
+      sel.value = targetPbs;
+    }
   });
+
+  updateDeductionPreview();
+  initMultiMonthScheduleForSelectedLoan(loan);
+}
+
+function initMultiMonthScheduleForSelectedLoan(loan) {
+  if (!loan) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const receiptInput = document.getElementById('multiReceiptDateInput');
+  if (receiptInput && !receiptInput.value) {
+    receiptInput.value = today;
+  }
+
+  const adviceInput = document.getElementById('multiAdviceNoInput');
+  if (adviceInput && !adviceInput.value) {
+    const yr = new Date().getFullYear();
+    adviceInput.value = `BA-${yr}-`;
+  }
+
+  let startMonth = '';
+  // 1. First priority: Check loan.last_deduction_month from backend
+  if (loan.last_deduction_month && /^\d{4}-\d{2}$/.test(loan.last_deduction_month)) {
+    let [y, m] = loan.last_deduction_month.split('-').map(Number);
+    m++;
+    if (m > 12) { m = 1; y++; }
+    startMonth = `${y}-${String(m).padStart(2, '0')}`;
+  } else if (typeof transferredLoansData !== 'undefined' && transferredLoansData?.records) {
+    const rec = transferredLoansData.records.find(r => r.loanId == loan.id);
+    if (rec && rec.dueMonthsList && rec.dueMonthsList.length > 0) {
+      startMonth = rec.dueMonthsList[0];
+    }
+  }
+
+  // 2. Second priority: Check loadedRepaymentRecords or state.repayments
+  if (!startMonth) {
+    const pool = (typeof loadedRepaymentRecords !== 'undefined' ? loadedRepaymentRecords : (state.repayments || []));
+    const reps = pool.filter(r => r.loan_id == loan.id && !r.is_deleted);
+    if (reps.length > 0) {
+      const sorted = [...reps].sort((a, b) => a.deduction_month.localeCompare(b.deduction_month));
+      const lastMonth = sorted[sorted.length - 1].deduction_month;
+      let [y, m] = lastMonth.split('-').map(Number);
+      m++;
+      if (m > 12) { m = 1; y++; }
+      startMonth = `${y}-${String(m).padStart(2, '0')}`;
+    }
+  }
+
+  // 3. Fallback: current month or scheduled start month if loan is very new
+  if (!startMonth) {
+    const scheduled = typeof getLoanScheduledStartMonth === 'function' ? getLoanScheduledStartMonth(loan) : '';
+    const curMonth = new Date().toISOString().slice(0, 7);
+    startMonth = (scheduled && scheduled > curMonth) ? scheduled : curMonth;
+  }
+
+  if (!startMonth || !/^\d{4}-\d{2}$/.test(startMonth)) {
+    startMonth = new Date().toISOString().slice(0, 7);
+  }
+
+  let [sY, sM] = startMonth.split('-').map(Number);
+  let eY = sY;
+  let eM = sM + 1; // Default to 2 months window
+  while (eM > 12) {
+    eM -= 12;
+    eY++;
+  }
+  const endMonth = `${eY}-${String(eM).padStart(2, '0')}`;
+
+  const startInput = document.getElementById('multiStartMonthInput');
+  const endInput = document.getElementById('multiEndMonthInput');
+  if (startInput) startInput.value = startMonth;
+  if (endInput) endInput.value = endMonth;
+
+  const installment = Number(loan.monthly_installment || 0);
+  const months = getMonthsRange(startMonth, endMonth);
+  const totalRemittance = installment * months.length;
+
+  const totalInput = document.getElementById('multiTotalRemittanceInput');
+  if (totalInput) totalInput.value = totalRemittance > 0 ? totalRemittance : '';
+
+  multiMonthSchedule = months.map(m => ({
+    deduction_month: m,
+    amount: installment,
+    principal_paid: 0,
+    interest_paid: 0,
+    voucher_no: '',
+    remarks: `${formatMonthYearBanglaBadge(m).replace(/[()]/g, '')} কিস্তি`
+  }));
+
+  renderMultiMonthSchedule();
+}
+
+function onMultiRangeChange() {
+  let startMonth = document.getElementById('multiStartMonthInput')?.value;
+  let endMonth = document.getElementById('multiEndMonthInput')?.value;
+  if (!startMonth && !endMonth) return;
+
+  const startInput = document.getElementById('multiStartMonthInput');
+  const endInput = document.getElementById('multiEndMonthInput');
+
+  if (startMonth && !endMonth) {
+    endMonth = startMonth;
+    if (endInput) endInput.value = endMonth;
+  } else if (!startMonth && endMonth) {
+    startMonth = endMonth;
+    if (startInput) startInput.value = startMonth;
+  }
+
+  if (startMonth > endMonth) {
+    endMonth = startMonth;
+    if (endInput) endInput.value = endMonth;
+  }
+
+  const months = getMonthsRange(startMonth, endMonth);
+  if (months.length === 0) return;
+
+  const loanId = document.getElementById('deductionLoanSelect')?.value;
+  const loan = state.loans?.find(l => l.id == loanId);
+  const defaultAmt = loan ? Number(loan.monthly_installment || 0) : 0;
+
+  const prevMap = new Map();
+  (multiMonthSchedule || []).forEach(r => prevMap.set(r.deduction_month, r));
+
+  multiMonthSchedule = months.map(m => {
+    const existing = prevMap.get(m);
+    return {
+      deduction_month: m,
+      amount: existing && Number(existing.amount) > 0 ? existing.amount : defaultAmt,
+      principal_paid: 0,
+      interest_paid: 0,
+      voucher_no: existing ? existing.voucher_no : '',
+      remarks: existing ? existing.remarks : `${formatMonthYearBanglaBadge(m).replace(/[()]/g, '')} কিস্তি`
+    };
+  });
+
+  const totalInput = document.getElementById('multiTotalRemittanceInput');
+  const total = parseFloat(totalInput?.value || 0);
+  if (total > 0 && multiMonthSchedule.length > 0) {
+    const perMonth = Math.floor(total / multiMonthSchedule.length);
+    multiMonthSchedule.forEach((r, idx) => {
+      r.amount = (idx === multiMonthSchedule.length - 1)
+        ? (total - perMonth * (multiMonthSchedule.length - 1))
+        : perMonth;
+    });
+  } else if (totalInput && (!totalInput.value || totalInput.value <= 0)) {
+    totalInput.value = multiMonthSchedule.reduce((s, r) => s + r.amount, 0);
+  }
+
+  renderMultiMonthSchedule();
+}
+
+function setMultiQuickRange(monthsCount, presetType) {
+  let startMonth = document.getElementById('multiStartMonthInput')?.value;
+  let year = new Date().getFullYear();
+
+  if (startMonth && startMonth.length >= 7) {
+    year = parseInt(startMonth.slice(0, 4), 10);
+  }
+
+  let sMonth = startMonth || `${year}-05`;
+  let eMonth = '';
+
+  if (presetType === 'jul-aug') {
+    sMonth = `${year}-07`;
+    eMonth = `${year}-08`;
+  } else if (presetType === 'q1') {
+    sMonth = `${year}-07`;
+    eMonth = `${year}-09`;
+  } else if (presetType === 'may-aug') {
+    sMonth = `${year}-05`;
+    eMonth = `${year}-08`;
+  } else if (presetType === 'may-oct') {
+    sMonth = `${year}-05`;
+    eMonth = `${year}-10`;
+  } else {
+    let [y, m] = sMonth.split('-').map(Number);
+    let ey = y;
+    let em = m + monthsCount - 1;
+    while (em > 12) {
+      em -= 12;
+      ey++;
+    }
+    eMonth = `${ey}-${String(em).padStart(2, '0')}`;
+  }
+
+  const startInput = document.getElementById('multiStartMonthInput');
+  const endInput = document.getElementById('multiEndMonthInput');
+  if (startInput) startInput.value = sMonth;
+  if (endInput) endInput.value = eMonth;
+
+  onMultiRangeChange();
+}
+
+function onMultiTotalAmountInput() {
+  const total = parseFloat(document.getElementById('multiTotalRemittanceInput')?.value || 0);
+
+  if (!multiMonthSchedule || multiMonthSchedule.length === 0) {
+    const startMonth = document.getElementById('multiStartMonthInput')?.value;
+    const endMonth = document.getElementById('multiEndMonthInput')?.value;
+    if (startMonth && endMonth) {
+      onMultiRangeChange();
+    } else {
+      const loanId = document.getElementById('deductionLoanSelect')?.value;
+      const loan = state.loans?.find(l => l.id == loanId);
+      if (loan) initMultiMonthScheduleForSelectedLoan(loan);
+    }
+  }
+
+  if (multiMonthSchedule && multiMonthSchedule.length > 0 && total > 0) {
+    const perMonth = Math.floor(total / multiMonthSchedule.length);
+    multiMonthSchedule.forEach((r, idx) => {
+      r.amount = (idx === multiMonthSchedule.length - 1)
+        ? (total - perMonth * (multiMonthSchedule.length - 1))
+        : perMonth;
+    });
+  }
+
+  renderMultiMonthSchedule();
+}
+
+function addMultiMonthRow() {
+  const loanId = document.getElementById('deductionLoanSelect')?.value;
+  const loan = state.loans?.find(l => l.id == loanId);
+  const defaultAmt = loan ? Number(loan.monthly_installment || 0) : 0;
+
+  let nextMonth = '';
+  if (multiMonthSchedule && multiMonthSchedule.length > 0) {
+    const lastMonth = multiMonthSchedule[multiMonthSchedule.length - 1].deduction_month;
+    let [y, m] = lastMonth.split('-').map(Number);
+    m++;
+    if (m > 12) { m = 1; y++; }
+    nextMonth = `${y}-${String(m).padStart(2, '0')}`;
+  } else {
+    const startVal = document.getElementById('multiStartMonthInput')?.value;
+    nextMonth = startVal || new Date().toISOString().slice(0, 7);
+  }
+
+  multiMonthSchedule.push({
+    deduction_month: nextMonth,
+    amount: defaultAmt,
+    principal_paid: 0,
+    interest_paid: 0,
+    voucher_no: '',
+    remarks: `${formatMonthYearBanglaBadge(nextMonth).replace(/[()]/g, '')} কিস্তি`
+  });
+
+  const startInput = document.getElementById('multiStartMonthInput');
+  const endInput = document.getElementById('multiEndMonthInput');
+  if (startInput && multiMonthSchedule.length === 1) startInput.value = nextMonth;
+  if (endInput) endInput.value = nextMonth;
+
+  const totalInput = document.getElementById('multiTotalRemittanceInput');
+  if (totalInput) {
+    totalInput.value = multiMonthSchedule.reduce((s, r) => s + Number(r.amount || 0), 0);
+  }
+
+  renderMultiMonthSchedule();
+}
+
+function removeMultiMonthRow(idx) {
+  if (multiMonthSchedule.length <= 1) {
+    showToast('কমপক্ষে একটি মাস তালিকায় থাকতে হবে।', 'info');
+    return;
+  }
+
+  multiMonthSchedule.splice(idx, 1);
+
+  if (multiMonthSchedule.length > 0) {
+    const startInput = document.getElementById('multiStartMonthInput');
+    const endInput = document.getElementById('multiEndMonthInput');
+    if (startInput) startInput.value = multiMonthSchedule[0].deduction_month;
+    if (endInput) endInput.value = multiMonthSchedule[multiMonthSchedule.length - 1].deduction_month;
+  }
+
+  const totalInput = document.getElementById('multiTotalRemittanceInput');
+  if (totalInput) {
+    totalInput.value = multiMonthSchedule.reduce((s, r) => s + Number(r.amount || 0), 0);
+  }
+
+  renderMultiMonthSchedule();
+}
+
+function onScheduleMonthChange(idx, val) {
+  if (!multiMonthSchedule[idx]) return;
+  multiMonthSchedule[idx].deduction_month = val;
+  const badge = document.getElementById(`scheduleMonthBadge_${idx}`);
+  if (badge) badge.textContent = formatMonthYearBanglaBadge(val);
+  recalculateMultiMonthSchedule();
+}
+
+function onScheduleAmountChange(idx, val) {
+  if (!multiMonthSchedule[idx]) return;
+  multiMonthSchedule[idx].amount = parseFloat(val) || 0;
+  const totalInput = document.getElementById('multiTotalRemittanceInput');
+  if (totalInput) {
+    totalInput.value = multiMonthSchedule.reduce((s, r) => s + Number(r.amount || 0), 0);
+  }
+  recalculateMultiMonthSchedule();
+}
+
+function onScheduleVoucherChange(idx, val) {
+  if (!multiMonthSchedule[idx]) return;
+  multiMonthSchedule[idx].voucher_no = val;
+}
+
+function onScheduleRemarksChange(idx, val) {
+  if (!multiMonthSchedule[idx]) return;
+  multiMonthSchedule[idx].remarks = val;
+}
+
+function renderMultiMonthSchedule() {
+  const tbody = document.getElementById('multiMonthScheduleTableBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  if (!multiMonthSchedule || multiMonthSchedule.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="8" class="text-center py-6 text-gray-400">
+          কোনো কিস্তির মাস নির্বাচিত নেই। উপরের শুরুর ও শেষের মাস নির্বাচন করুন অথবা 'পরবর্তী মাস যোগ করুন' ক্লিক করুন।
+        </td>
+      </tr>
+    `;
+    recalculateMultiMonthSchedule();
+    return;
+  }
+
+  multiMonthSchedule.forEach((row, idx) => {
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-slate-50 transition border-b border-gray-100';
+    tr.innerHTML = `
+      <td class="p-2 text-center font-mono text-gray-500 font-bold">${idx + 1}</td>
+      <td class="p-2">
+        <div class="flex items-center space-x-1.5">
+          <input type="month" value="${row.deduction_month}" onchange="onScheduleMonthChange(${idx}, this.value)" class="p-1 border border-gray-300 rounded text-xs font-mono bg-white focus:ring-1 focus:ring-emerald-500">
+          <span class="text-gray-600 text-[11px] font-semibold whitespace-nowrap" id="scheduleMonthBadge_${idx}">${formatMonthYearBanglaBadge(row.deduction_month)}</span>
+        </div>
+      </td>
+      <td class="p-2">
+        <input type="number" step="0.01" value="${row.amount || 0}" oninput="onScheduleAmountChange(${idx}, this.value)" class="w-24 p-1 border border-gray-300 rounded text-xs font-bold font-mono focus:ring-1 focus:ring-emerald-500 text-gray-900">
+      </td>
+      <td class="p-2 text-center">
+        <span class="font-mono font-bold text-emerald-700 text-xs" id="scheduleRowPrin_${idx}">${formatBDT(row.principal_paid || 0)}</span>
+      </td>
+      <td class="p-2 text-center">
+        <span class="font-mono font-bold text-blue-700 text-xs" id="scheduleRowInt_${idx}">${formatBDT(row.interest_paid || 0)}</span>
+      </td>
+      <td class="p-2">
+        <input type="text" value="${row.voucher_no || ''}" oninput="onScheduleVoucherChange(${idx}, this.value)" placeholder="ভাউচার/চেক" class="w-full min-w-[100px] p-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-emerald-500">
+      </td>
+      <td class="p-2">
+        <input type="text" value="${row.remarks || ''}" oninput="onScheduleRemarksChange(${idx}, this.value)" placeholder="বিবরণ/নোট" class="w-full min-w-[110px] p-1 border border-gray-300 rounded text-xs focus:ring-1 focus:ring-emerald-500">
+      </td>
+      <td class="p-2 text-center">
+        <button type="button" onclick="removeMultiMonthRow(${idx})" class="text-rose-500 hover:text-rose-700 p-1 rounded hover:bg-rose-50 transition cursor-pointer" title="এই মাস বাদ দিন">
+          <i data-lucide="trash-2" class="w-4 h-4"></i>
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  recalculateMultiMonthSchedule();
+  if (window.lucide) lucide.createIcons();
+}
+
+function recalculateMultiMonthSchedule() {
+  const loanId = document.getElementById('deductionLoanSelect')?.value;
+  const loan = state.loans?.find(l => l.id == loanId);
+
+  let curPrin = loan ? Number(loan.principal_balance || 0) : 0;
+  let curInt = loan ? Number(loan.interest_balance || 0) : 0;
+
+  let totalRemittance = 0;
+  let totalPrinPaid = 0;
+  let totalIntPaid = 0;
+
+  multiMonthSchedule.forEach((row, idx) => {
+    const amt = Number(row.amount || 0);
+    totalRemittance += amt;
+
+    let pPaid = 0;
+    let iPaid = 0;
+    let rem = amt;
+
+    if (curPrin > 0) {
+      if (rem <= curPrin) {
+        pPaid = rem;
+        rem = 0;
+      } else {
+        pPaid = curPrin;
+        rem -= curPrin;
+      }
+    }
+
+    if (rem > 0 && curInt > 0) {
+      if (rem <= curInt) {
+        iPaid = rem;
+        rem = 0;
+      } else {
+        iPaid = curInt;
+        rem -= curInt;
+      }
+    }
+
+    const newPrin = Math.max(0, curPrin - pPaid);
+    const newInt = Math.max(0, curInt - iPaid);
+
+    row.principal_paid = pPaid;
+    row.interest_paid = iPaid;
+    row.advance_paid = rem;
+
+    curPrin = newPrin;
+    curInt = newInt;
+
+    totalPrinPaid += pPaid;
+    totalIntPaid += iPaid;
+
+    const prinEl = document.getElementById(`scheduleRowPrin_${idx}`);
+    if (prinEl) prinEl.textContent = formatBDT(pPaid);
+
+    const intEl = document.getElementById(`scheduleRowInt_${idx}`);
+    if (intEl) intEl.textContent = formatBDT(iPaid);
+  });
+
+  const sumRemEl = document.getElementById('multiSummaryTotalRemittance');
+  if (sumRemEl) sumRemEl.textContent = formatBDT(totalRemittance);
+
+  const sumPrinEl = document.getElementById('multiSummaryPrincipalPaid');
+  if (sumPrinEl) sumPrinEl.textContent = formatBDT(totalPrinPaid);
+
+  const sumIntEl = document.getElementById('multiSummaryInterestPaid');
+  if (sumIntEl) sumIntEl.textContent = formatBDT(totalIntPaid);
+
+  const remPrinEl = document.getElementById('multiSummaryRemainingPrincipal');
+  if (remPrinEl) {
+    remPrinEl.textContent = formatBDT(curPrin);
+  }
+
+  const remIntEl = document.getElementById('multiSummaryRemainingInterest');
+  if (remIntEl) {
+    remIntEl.textContent = formatBDT(curInt);
+  }
+
+  const submitText = document.getElementById('multiSubmitBtnText');
+  if (submitText) {
+    const count = multiMonthSchedule.length;
+    submitText.textContent = `একসাথে ${toBengaliDigits(count)} মাসের কিস্তি পোস্টিং করুন`;
+  }
+}
+
+async function submitMultiMonthRepayment(event) {
+  event.preventDefault();
+  const loanId = document.getElementById('deductionLoanSelect')?.value;
+  if (!loanId) {
+    showToast('ঋণগ্রহীতা কর্মকর্তা/কর্মচারী নির্বাচন করুন।', 'warning');
+    return;
+  }
+
+  const receiptDate = document.getElementById('multiReceiptDateInput')?.value;
+  if (!receiptDate) {
+    showToast('রেমিট্যান্স জমার তারিখ প্রদান করুন।', 'warning');
+    return;
+  }
+
+  const sourcePbs = document.getElementById('multiSourcePbsSelect')?.value;
+  if (!sourcePbs) {
+    showToast('টাকা প্রেরণকারী পবিস নির্বাচন করুন।', 'warning');
+    return;
+  }
+
+  const adviceNo = document.getElementById('multiAdviceNoInput')?.value;
+
+  // Auto-generate schedule if user selected range but schedule hasn't refreshed
+  if (!multiMonthSchedule || multiMonthSchedule.length === 0) {
+    const startMonth = document.getElementById('multiStartMonthInput')?.value;
+    const endMonth = document.getElementById('multiEndMonthInput')?.value;
+    if (startMonth && endMonth) {
+      onMultiRangeChange();
+    }
+  }
+
+  if (!multiMonthSchedule || multiMonthSchedule.length === 0) {
+    showToast('অন্তত একটি মাসের কিস্তি শিডিউল প্রস্তুত করুন।', 'warning');
+    return;
+  }
+
+  for (let i = 0; i < multiMonthSchedule.length; i++) {
+    const item = multiMonthSchedule[i];
+    if (!item.deduction_month) {
+      showToast(`${i + 1} নং সারির কর্তনের মাস পূরণ করুন।`, 'warning');
+      return;
+    }
+    if (!item.amount || item.amount <= 0) {
+      showToast(`${item.deduction_month} মাসের কিস্তির টাকার পরিমাণ প্রদান করুন।`, 'warning');
+      return;
+    }
+  }
+
+  const totalAmt = multiMonthSchedule.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const totalPrin = multiMonthSchedule.reduce((s, r) => s + Number(r.principal_paid || 0), 0);
+  const totalInt = multiMonthSchedule.reduce((s, r) => s + Number(r.interest_paid || 0), 0);
+  const totalAdv = multiMonthSchedule.reduce((s, r) => s + Number(r.advance_paid || 0), 0);
+
+  const confirmMsg = `একসাথে ${toBengaliDigits(multiMonthSchedule.length)} মাসের রেমিট্যান্স/কিস্তি পোস্টিং নিশ্চিত করুন।\nমোট টাকা: ${formatBDT(totalAmt)}\n(আসল সমন্বয়: ${formatBDT(totalPrin)}, সুদ সমন্বয়: ${formatBDT(totalInt)}${totalAdv > 0 ? `, অগ্রিম জমা: ${formatBDT(totalAdv)}` : ''})`;
+
+  const confirmed = await confirmWithSweetAlert(confirmMsg, {
+    title: 'মাল্টি-মান্থ কিস্তি পোস্টিং',
+    icon: 'question',
+    confirmButtonText: 'হ্যাঁ, পোস্ট করুন',
+    confirmButtonColor: '#047857'
+  });
+  if (!confirmed) return;
+
+  const submitBtn = document.getElementById('multiSubmitBtn');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin mr-1.5"></i> পোস্টিং হচ্ছে...`;
+    if (window.lucide) lucide.createIcons();
+  }
+
+  try {
+    const payload = {
+      loan_id: loanId,
+      repayment_method: 'INTER_PBS_COLLECTION',
+      source_pbs_name: sourcePbs,
+      receipt_date: receiptDate,
+      bank_advice_no: adviceNo,
+      schedule: multiMonthSchedule.map(r => ({
+        deduction_month: r.deduction_month,
+        amount: r.amount,
+        voucher_no: r.voucher_no || adviceNo,
+        remarks: r.remarks || (sourcePbs ? `${sourcePbs} হতে রেমিট্যান্স প্রাপ্তি` : 'অন্য পবিস রেমিট্যান্স')
+      }))
+    };
+
+    const res = await API.post('/repayments/multi-month', payload);
+    if (res.success) {
+      closeModal('singleDeductionModal');
+      showToast(res.message || 'মাল্টি-মান্থ কিস্তি সফলভাবে সংরক্ষিত হয়েছে।', 'success');
+      loadRepayments();
+      loadLoans();
+      if (typeof loadDashboard === 'function') loadDashboard();
+      if (typeof loadTransferredLoans === 'function') loadTransferredLoans();
+      if (typeof loadCurrentMonthDeductionSnapshot === 'function') loadCurrentMonthDeductionSnapshot();
+    }
+  } catch (err) {
+    console.error('Multi-month submission error:', err);
+    showToast(err.message || 'পোস্টিং প্রক্রিয়া সম্পন্ন করা যায়নি।', 'error');
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      const count = multiMonthSchedule.length;
+      submitBtn.innerHTML = `
+        <i data-lucide="check" class="w-4 h-4"></i>
+        <span id="multiSubmitBtnText">একসাথে ${toBengaliDigits(count)} মাসের কিস্তি পোস্টিং করুন</span>
+      `;
+      if (window.lucide) lucide.createIcons();
+    }
+  }
+}
+
+function openMultiMonthPostingForLoan(loanId) {
+  openModal('singleDeductionModal');
+  populateRepaymentLoanDropdowns();
+  switchDeductionModalTab('multi');
+  const sel = document.getElementById('deductionLoanSelect');
+  if (sel) {
+    sel.value = loanId;
+    onDeductionBorrowerSelected();
+  }
+}
+
+const ALL_BD_PBS_LIST = [
+  "কক্সবাজার পল্লী বিদ্যুৎ সমিতি", "কিশোরগঞ্জ পল্লী বিদ্যুৎ সমিতি", "কুমিল্লা পল্লী বিদ্যুৎ সমিতি-১",
+  "কুমিল্লা পল্লী বিদ্যুৎ সমিতি-২", "কুমিল্লা পল্লী বিদ্যুৎ সমিতি-৩", "কুমিল্লা পল্লী বিদ্যুৎ সমিতি-৪",
+  "কুষ্টিয়া পল্লী বিদ্যুৎ সমিতি", "কুড়িগ্রাম-লালমনিরহাট পবিস", "খুলনা পল্লী বিদ্যুৎ সমিতি",
+  "গাইবান্ধা পল্লী বিদ্যুৎ সমিতি", "গাজীপুর পল্লী বিদ্যুৎ সমিতি-১", "গাজীপুর পল্লী বিদ্যুৎ সমিতি-২",
+  "গোপালগঞ্জ পল্লী বিদ্যুৎ সমিতি", "চট্টগ্রাম পল্লী বিদ্যুৎ সমিতি-১", "চট্টগ্রাম পল্লী বিদ্যুৎ সমিতি-২",
+  "চট্টগ্রাম পল্লী বিদ্যুৎ সমিতি-৩", "চাঁদপুর পল্লী বিদ্যুৎ সমিতি-১", "চাঁদপুর পল্লী বিদ্যুৎ সমিতি-২",
+  "চাঁপাইনবাবগঞ্জ পল্লী বিদ্যুৎ সমিতি", "জামালপুর পল্লী বিদ্যুৎ সমিতি", "জয়পুরহাট পল্লী বিদ্যুৎ সমিতি",
+  "ঝালকাঠি পল্লী বিদ্যুৎ সমিতি", "ঝিনাইদহ পল্লী বিদ্যুৎ সমিতি", "টাঙ্গাইল পল্লী বিদ্যুৎ সমিতি",
+  "ঠাকুরগাঁও পল্লী বিদ্যুৎ সমিতি", "ঢাকা পল্লী বিদ্যুৎ সমিতি-১", "ঢাকা পল্লী বিদ্যুৎ সমিতি-২",
+  "ঢাকা পল্লী বিদ্যুৎ সমিতি-৩", "ঢাকা পল্লী বিদ্যুৎ সমিতি-৪", "দিনাজপুর পল্লী বিদ্যুৎ সমিতি-১",
+  "দিনাজপুর পল্লী বিদ্যুৎ সমিতি-২", "নওগাঁ পল্লী বিদ্যুৎ সমিতি-১", "নওগাঁ পল্লী বিদ্যুৎ সমিতি-২",
+  "নরসিংদী পল্লী বিদ্যুৎ সমিতি-১", "নরসিংদী পল্লী বিদ্যুৎ সমিতি-২", "নাটোর পল্লী বিদ্যুৎ সমিতি-১",
+  "নাটোর পল্লী বিদ্যুৎ সমিতি-২", "নারায়ণগঞ্জ পল্লী বিদ্যুৎ সমিতি-১", "নারায়ণগঞ্জ পল্লী বিদ্যুৎ সমিতি-২",
+  "নীলফামারী পল্লী বিদ্যুৎ সমিতি", "নেত্রকোণা পল্লী বিদ্যুৎ সমিতি", "নোয়াখালী পল্লী বিদ্যুৎ সমিতি",
+  "পটুয়াখালী পল্লী বিদ্যুৎ সমিতি", "পাবনা পল্লী বিদ্যুৎ সমিতি-১", "পাবনা পল্লী বিদ্যুৎ সমিতি-২",
+  "পিরোজপুর পল্লী বিদ্যুৎ সমিতি", "ফরিদপুর পল্লী বিদ্যুৎ সমিতি", "ফেনী পল্লী বিদ্যুৎ সমিতি",
+  "বগুড়া পল্লী বিদ্যুৎ সমিতি-১", "বগুড়া পল্লী বিদ্যুৎ সমিতি-২", "বরিশাল পল্লী বিদ্যুৎ সমিতি-১",
+  "বরিশাল পল্লী বিদ্যুৎ সমিতি-২", "বাগেরহাট পল্লী বিদ্যুৎ সমিতি", "ব্রাহ্মণবাড়িয়া পল্লী বিদ্যুৎ সমিতি",
+  "ভোলা পল্লী বিদ্যুৎ সমিতি", "মাগুরা পল্লী বিদ্যুৎ সমিতি", "মাদারীপুর পল্লী বিদ্যুৎ সমিতি",
+  "মানিকগঞ্জ পল্লী বিদ্যুৎ সমিতি", "মুন্সিগঞ্জ পল্লী বিদ্যুৎ সমিতি", "মেহেরপুর পল্লী বিদ্যুৎ সমিতি",
+  "মৌলভীবাজার পল্লী বিদ্যুৎ সমিতি", "ময়মনসিংহ পল্লী বিদ্যুৎ সমিতি-১", "ময়মনসিংহ পল্লী বিদ্যুৎ সমিতি-২",
+  "ময়মনসিংহ পল্লী বিদ্যুৎ সমিতি-৩", "যশোর পল্লী বিদ্যুৎ সমিতি-১", "যশোর পল্লী বিদ্যুৎ সমিতি-২",
+  "রংপুর পল্লী বিদ্যুৎ সমিতি-১", "রংপুর পল্লী বিদ্যুৎ সমিতি-২", "রাজবাড়ী পল্লী বিদ্যুৎ সমিতি",
+  "রাজশাহী পল্লী বিদ্যুৎ সমিতি", "লক্ষ্মীপুর পল্লী বিদ্যুৎ সমিতি", "শরীয়তপুর পল্লী বিদ্যুৎ সমিতি",
+  "শেরপুর পল্লী বিদ্যুৎ সমিতি", "সাতক্ষীরা পল্লী বিদ্যুৎ সমিতি", "সিরাজগঞ্জ পল্লী বিদ্যুৎ সমিতি-১",
+  "সিরাজগঞ্জ পল্লী বিদ্যুৎ সমিতি-২", "সিলেট পল্লী বিদ্যুৎ সমিতি-১", "সিলেট পল্লী বিদ্যুৎ সমিতি-২",
+  "সুনামগঞ্জ পল্লী বিদ্যুৎ সমিতি", "হবিগঞ্জ পল্লী বিদ্যুৎ সমিতি"
+];
+
+function populateRepaymentLoanDropdowns() {
+  const hiddenInput = document.getElementById('deductionLoanSelect');
+  if (!hiddenInput) return;
+
+  const currentVal = hiddenInput.value;
+  const activeLoans = (state.loans || []).filter(l => l.status === 'ACTIVE');
+  const countEl = document.getElementById('deductionModalActiveLoansCount');
+  if (countEl) countEl.textContent = `মোট সক্রিয় ঋণ: ${toBengaliDigits(activeLoans.length)} টি`;
+
+  if (hiddenInput.tagName === 'SELECT') {
+    hiddenInput.innerHTML = '<option value="">-- ঋণ হিসাব নম্বর ও কর্মচারী নির্বাচন করুন --</option>';
+    activeLoans.forEach(l => {
+      const isSuspended = Boolean(l.salary_deduction_suspended);
+      const suspendedLabel = isSuspended ? ' [বেতন কর্তন স্থগিত]' : '';
+      hiddenInput.innerHTML += `<option value="${l.id}">${l.loan_no} - ${l.emp_name}${suspendedLabel} (আসল: ${formatBDT(l.principal_balance)}, সুদ: ${formatBDT(l.interest_balance)})</option>`;
+    });
+    if (currentVal) hiddenInput.value = currentVal;
+  }
+
+  const senderSelects = [
+    document.getElementById('multiSourcePbsSelect'),
+    document.getElementById('singleSourcePbsSelect')
+  ];
+
+  const ownPbsName = state.pbsSettings?.pbs_name || 'গাজীপুর পল্লী বিদ্যুৎ সমিতি-২';
+  const pbsSet = new Set(ALL_BD_PBS_LIST);
+
+  (state.otherPbsList || state.otherPbs || []).forEach(p => {
+    if (p.pbs_name) pbsSet.add(p.pbs_name);
+  });
+  (state.employees || []).forEach(e => {
+    if (e.current_posting_pbs && e.current_posting_pbs !== 'নিজস্ব পবিস') pbsSet.add(e.current_posting_pbs);
+  });
+  (state.loans || []).forEach(l => {
+    if (l.origin_pbs_name && l.origin_pbs_name !== 'নিজস্ব পবিস') pbsSet.add(l.origin_pbs_name);
+    if (l.current_posting_pbs && l.current_posting_pbs !== 'নিজস্ব পবিস') pbsSet.add(l.current_posting_pbs);
+  });
+  if (typeof transferredLoansData !== 'undefined' && transferredLoansData?.records) {
+    transferredLoansData.records.forEach(r => {
+      if (r.currentPostingPbs && r.currentPostingPbs !== 'নিজস্ব পবিস') pbsSet.add(r.currentPostingPbs);
+    });
+  }
+
+  // Exclude own PBS from sender list
+  pbsSet.delete(ownPbsName);
+  pbsSet.delete('নিজস্ব পবিস');
+
+  const sortedPbs = Array.from(pbsSet).sort((a, b) => a.localeCompare(b, 'bn'));
+
+  senderSelects.forEach(sel => {
+    if (!sel) return;
+    const curPbs = sel.value;
+    sel.innerHTML = '<option value="">-- প্রেরক পবিস নির্বাচন করুন --</option>';
+    sortedPbs.forEach(name => {
+      sel.innerHTML += `<option value="${name}">${name}</option>`;
+    });
+    if (curPbs && sortedPbs.includes(curPbs)) {
+      sel.value = curPbs;
+    }
+  });
+
+  if (currentVal && activeLoans.some(l => l.id == currentVal)) {
+    hiddenInput.value = currentVal;
+    onDeductionBorrowerSelected();
+  } else if (activeLoans.length > 0 && !hiddenInput.value) {
+    hiddenInput.value = activeLoans[0].id;
+    onDeductionBorrowerSelected();
+  }
+
+  // Background sync if otherPbsList is not populated
+  if (!state.otherPbsList || state.otherPbsList.length === 0) {
+    API.get('/settings').then(res => {
+      if (res && res.success && res.otherPbsList) {
+        state.pbsSettings = res.pbsSettings;
+        state.otherPbsList = res.otherPbsList;
+        res.otherPbsList.forEach(p => {
+          if (p.pbs_name && p.pbs_name !== ownPbsName && p.pbs_name !== 'নিজস্ব পবিস') {
+            pbsSet.add(p.pbs_name);
+          }
+        });
+        const updatedList = Array.from(pbsSet).sort((a, b) => a.localeCompare(b, 'bn'));
+        senderSelects.forEach(sel => {
+          if (!sel) return;
+          const selectedVal = sel.value;
+          sel.innerHTML = '<option value="">-- প্রেরক পবিস নির্বাচন করুন --</option>';
+          updatedList.forEach(name => {
+            sel.innerHTML += `<option value="${name}">${name}</option>`;
+          });
+          if (selectedVal) sel.value = selectedVal;
+        });
+      }
+    }).catch(e => console.warn('Could not refresh settings for repayment dropdown:', e));
+  }
+}
+
+function onRepaymentMethodChange() {
+  const method = document.getElementById('singleRepaymentMethodSelect')?.value || 'SALARY_DEDUCTION';
+  const checkbox = document.getElementById('allowSuspendedRepaymentCheckbox');
+  const modalTitle = document.getElementById('singleDeductionModalTitle');
+  const monthLabel = document.getElementById('singleDeductionMonthLabel');
+  const dateLabel = document.getElementById('singleDeductionDateLabel');
+  const amountLabel = document.getElementById('singleDeductionAmountLabel');
+  const submitBtn = document.getElementById('singleDeductionSubmitBtn');
+  const voucherInput = document.getElementById('deductionVoucherInput');
+  const singlePbsWrapper = document.getElementById('singleSourcePbsWrapper');
+
+  if (singlePbsWrapper) {
+    if (method === 'INTER_PBS_REMITTANCE') {
+      singlePbsWrapper.classList.remove('hidden');
+    } else {
+      singlePbsWrapper.classList.add('hidden');
+    }
+  }
+
+  if (method === 'BANK_DEPOSIT') {
+    if (checkbox) checkbox.checked = true;
+    if (modalTitle) modalTitle.textContent = 'একক কিস্তি জমা এন্ট্রি (ব্যাংক জমা / পে-অর্ডার / ডিডি)';
+    if (monthLabel) monthLabel.textContent = 'হিসাবের মাস (YYYY-MM) *';
+    if (dateLabel) dateLabel.textContent = 'ব্যাংক জমার তারিখ *';
+    if (amountLabel) amountLabel.textContent = 'জমাকৃত কিস্তি/ঋণের টাকা *';
+    if (submitBtn) submitBtn.textContent = 'ব্যাংক জমা সংরক্ষণ';
+    if (voucherInput) voucherInput.placeholder = 'ব্যাংক স্লিপ নং / পে-অর্ডার / ডিডি নং';
+  } else if (method === 'CASH') {
+    if (checkbox) checkbox.checked = true;
+    if (modalTitle) modalTitle.textContent = 'একক কিস্তি জমা এন্ট্রি (নগদ জমা / ক্যাশ কালেকশন)';
+    if (monthLabel) monthLabel.textContent = 'হিসাবের মাস (YYYY-MM) *';
+    if (dateLabel) dateLabel.textContent = 'নগদ জমার তারিখ *';
+    if (amountLabel) amountLabel.textContent = 'নগদ জমাকৃত টাকা *';
+    if (submitBtn) submitBtn.textContent = 'নগদ জমা সংরক্ষণ';
+    if (voucherInput) voucherInput.placeholder = 'মানি রিসিপ্ট নং / ক্যাশ ভাউচার নং';
+  } else if (method === 'LUMPSUM_SETTLEMENT') {
+    if (checkbox) checkbox.checked = true;
+    if (modalTitle) modalTitle.textContent = 'এককালীন সম্পূর্ণ/বিশেষ ঋণ সমন্বয় এন্ট্রি';
+    if (monthLabel) monthLabel.textContent = 'সমন্বয়ের মাস (YYYY-MM) *';
+    if (dateLabel) dateLabel.textContent = 'সমন্বয়ের তারিখ *';
+    if (amountLabel) amountLabel.textContent = 'সমন্বয়কৃত মোট টাকা *';
+    if (submitBtn) submitBtn.textContent = 'এককালীন সমন্বয় সংরক্ষণ';
+    if (voucherInput) voucherInput.placeholder = 'সমন্বয় ভাউচার / অনুমোদন স্মারক নং';
+  } else if (method === 'INTER_PBS_REMITTANCE') {
+    if (checkbox) checkbox.checked = true;
+    if (modalTitle) modalTitle.textContent = 'অন্য পবিস রেমিট্যান্স পোস্টিং (একক মাস)';
+    if (monthLabel) monthLabel.textContent = 'কর্তনের মাস (YYYY-MM) *';
+    if (dateLabel) dateLabel.textContent = 'রেমিট্যান্স জমার তারিখ *';
+    if (amountLabel) amountLabel.textContent = 'প্রাপ্ত কিস্তির টাকা *';
+    if (submitBtn) submitBtn.textContent = 'রেমিট্যান্স সংরক্ষণ';
+    if (voucherInput) voucherInput.placeholder = 'ব্যাংক অ্যাডভাইস / চেক নং';
+  } else {
+    // SALARY_DEDUCTION
+    if (modalTitle) modalTitle.textContent = 'একক কিস্তি কর্তন এন্ট্রি (নিয়মিত বেতন কর্তন)';
+    if (monthLabel) monthLabel.textContent = 'কর্তনের মাস (YYYY-MM) *';
+    if (dateLabel) dateLabel.textContent = 'কর্তনের তারিখ *';
+    if (amountLabel) amountLabel.textContent = 'কর্তনকৃত কিস্তির টাকা *';
+    if (submitBtn) submitBtn.textContent = 'কর্তন সংরক্ষণ';
+    if (voucherInput) voucherInput.placeholder = 'ভাউচার নং / রেফারেন্স নং';
+  }
+
+  const monthInput = document.getElementById('deductionMonthInput');
+  if (monthInput && !monthInput.value) {
+    monthInput.value = new Date().toISOString().slice(0, 7);
+  }
+  const dateInput = document.getElementById('deductionDateInput');
+  if (dateInput && !dateInput.value) {
+    dateInput.value = new Date().toISOString().slice(0, 10);
+  }
+
+  updateDeductionPreview();
+}
+
+function fillFullPayoffAmount() {
+  const loanId = document.getElementById('deductionLoanSelect')?.value;
+  if (!loanId) {
+    showToast('প্রথমে ঋণ হিসাব নির্বাচন করুন।', 'warning');
+    return;
+  }
+  const loan = state.loans.find(l => l.id == loanId);
+  if (!loan) return;
+
+  const totalOutstanding = Math.max(0, (Number(loan.principal_balance) || 0) + (Number(loan.interest_balance) || 0));
+  const amountInput = document.getElementById('deductionAmountInput');
+  if (amountInput) {
+    amountInput.value = totalOutstanding;
+  }
+
+  // Suggest full settlement / bank deposit method if not already set
+  const methodSelect = document.getElementById('singleRepaymentMethodSelect');
+  if (methodSelect && methodSelect.value === 'SALARY_DEDUCTION') {
+    methodSelect.value = 'LUMPSUM_SETTLEMENT';
+    onRepaymentMethodChange();
+  }
+
+  updateDeductionPreview();
+  showToast(`সর্বমোট বকেয়া পাওনা ${formatBDT(totalOutstanding)} টাকা পূরণ করা হয়েছে।`, 'info');
 }
 
 function updateDeductionPreview() {
   const loanId = document.getElementById('deductionLoanSelect')?.value;
   const amount = parseFloat(document.getElementById('deductionAmountInput')?.value || 0);
   const previewDiv = document.getElementById('deductionPreviewText');
+  const suspendedNotice = document.getElementById('singleDeductionSuspendedNotice');
+  const checkbox = document.getElementById('allowSuspendedRepaymentCheckbox');
+  const method = document.getElementById('singleRepaymentMethodSelect')?.value || 'SALARY_DEDUCTION';
 
-  if (!loanId || amount <= 0) {
-    previewDiv.textContent = 'টাকার পরিমাণ প্রদান করুন...';
+  if (!loanId) {
+    if (previewDiv) previewDiv.textContent = 'ঋণ হিসাব নির্বাচন করুন ও টাকার পরিমাণ দিন...';
+    if (suspendedNotice) suspendedNotice.classList.add('hidden');
     return;
   }
 
   const loan = state.loans.find(l => l.id == loanId);
   if (!loan) return;
+
+  // Show suspended notice if applicable
+  const isSuspended = Boolean(loan.salary_deduction_suspended);
+  if (suspendedNotice) {
+    if (isSuspended) {
+      suspendedNotice.classList.remove('hidden');
+    } else {
+      suspendedNotice.classList.add('hidden');
+      if (checkbox) checkbox.checked = false;
+    }
+  }
+
+  if (amount <= 0) {
+    if (previewDiv) {
+      previewDiv.innerHTML = `
+        <div>বর্তমান ঋণ স্থিতি: আসল <strong>${formatBDT(loan.principal_balance)}</strong>, ধার্যকৃত সুদ <strong>${formatBDT(loan.interest_balance)}</strong></div>
+        <div class="text-[11px] text-gray-500">পরিশোধের টাকার পরিমাণ দিন (অথবা 'সর্বমোট পাওনা হিসাব করুন' ক্লিক করুন)</div>
+      `;
+    }
+    return;
+  }
 
   let prinPaid = 0;
   let intPaid = 0;
@@ -1884,11 +3632,13 @@ function updateDeductionPreview() {
 
   const newPrin = Math.max(0, loan.principal_balance - prinPaid);
   const newInt = Math.max(0, loan.interest_balance - intPaid);
+  const isFullyCleared = (newPrin <= 0 && newInt <= 0);
+  const actionWord = method === 'SALARY_DEDUCTION' ? 'কর্তন' : (method === 'BANK_DEPOSIT' ? 'ব্যাংক জমা' : (method === 'CASH' ? 'নগদ জমা' : 'এককালীন সমন্বয়'));
 
   previewDiv.innerHTML = `
-    <div>&bull; আসল থেকে কর্তন: <strong>${formatBDT(prinPaid)}</strong> (নতুন আসল স্থিতি: ${formatBDT(newPrin)})</div>
-    <div>&bull; সুদ থেকে কর্তন: <strong>${formatBDT(intPaid)}</strong> (নতুন সুদ স্থিতি: ${formatBDT(newInt)})</div>
-    <div class="text-[11px] text-emerald-700 mt-1 font-semibold">※ সরকারি নিয়ম মোতাবেক আসল সম্পূর্ণ শূন্য না হওয়া পর্যন্ত সুদ কর্তন শুরু হবে না।</div>
+    <div>&bull; আসল ${actionWord}: <strong>${formatBDT(prinPaid)}</strong> (নতুন আসল স্থিতি: ${formatBDT(newPrin)})</div>
+    <div>&bull; সুদ ${actionWord}: <strong>${formatBDT(intPaid)}</strong> (নতুন সুদ স্থিতি: ${formatBDT(newInt)})</div>
+    ${isFullyCleared ? '<div class="text-xs font-bold text-emerald-800 bg-emerald-100 p-1.5 rounded mt-1">🎉 সম্পূর্ণ আসল ও সুদ পরিশোধ হচ্ছে! এই পোস্টিংয়ের পর ঋণ হিসাবটি সফলভাবে সমাপ্ত (CLOSED) হবে।</div>' : `<div class="text-[11px] text-emerald-700 mt-1 font-semibold">※ সরকারি নিয়ম মোতাবেক আসল সম্পূর্ণ শূন্য না হওয়া পর্যন্ত সুদ ${actionWord} শুরু হবে না।</div>`}
   `;
 }
 
@@ -1998,8 +3748,12 @@ async function handleBatchMonthChange() {
       !l.salary_deduction_suspended && !existingDeductedLoanIds.has(l.id)
     );
 
-    // Select all eligible loans by default
-    batchSelectedLoanIds = new Set(currentBatchEligibleLoans.map(l => l.id));
+    // Select eligible loans by default, excluding those in 12-month grace period (grace period deductions are voluntary)
+    batchSelectedLoanIds = new Set(
+      currentBatchEligibleLoans
+        .filter(l => !isLoanInGracePeriod(l, month))
+        .map(l => l.id)
+    );
 
     renderBatchDeductionRows();
   } catch (err) {
@@ -2071,9 +3825,12 @@ function renderBatchDeductionRows() {
     return;
   }
 
+  const currentBatchMonth = document.getElementById('batchMonthInput')?.value || '';
+
   visibleLoans.forEach((loan) => {
     const isOther = loan.loan_source_type === 'OTHER_PBS';
     const isChecked = batchSelectedLoanIds.has(loan.id);
+    const inGrace = isLoanInGracePeriod(loan, currentBatchMonth);
 
     // Calculate Principal & Interest portion for this loan deduction
     const inst = loan.monthly_installment || 0;
@@ -2104,7 +3861,10 @@ function renderBatchDeductionRows() {
       </td>
       <td class="p-2.5">
         <div class="font-mono text-gray-800 font-semibold">${loan.loan_no}</div>
-        <span class="text-[10px] px-1.5 py-0.2 rounded font-medium ${isOther ? 'badge-other' : 'badge-own'}">${loan.origin_pbs_name}</span>
+        <div class="flex flex-wrap items-center gap-1 mt-0.5">
+          <span class="text-[10px] px-1.5 py-0.2 rounded font-medium ${isOther ? 'badge-other' : 'badge-own'}">${loan.origin_pbs_name}</span>
+          ${inGrace ? `<span class="text-[10px] px-1.5 py-0.5 rounded font-bold bg-purple-100 text-purple-800 border border-purple-300">⏳ ১২ মাস গ্রেস (ঐচ্ছিক)</span>` : ''}
+        </div>
       </td>
       <td class="p-2.5 text-right font-mono font-bold text-gray-800">${formatBDT(loan.principal_balance)}</td>
       <td class="p-2.5 text-right font-mono font-bold text-blue-900">${formatBDT(loan.monthly_installment)}</td>
@@ -2245,6 +4005,7 @@ async function deleteRepaymentRecord(repId) {
       loadRepayments();
       loadLoans();
       if (typeof loadDashboard === 'function') loadDashboard();
+      if (typeof loadCurrentMonthDeductionSnapshot === 'function') loadCurrentMonthDeductionSnapshot();
     }
   } catch (err) {
     showToast(err.message, 'error');
@@ -2252,56 +4013,96 @@ async function deleteRepaymentRecord(repId) {
 }
 
 // 5. INTEREST PROVISIONS
+let loadedProvisionRecords = [];
+
 async function loadProvisions() {
   try {
-    const res = await API.get('/provisions');
+    const month = document.getElementById('provisionMonthFilter')?.value || '';
+    const res = await API.get('/provisions', { month });
     if (!res.success) return;
 
-    const tbody = document.getElementById('provisionsTableBody');
-    tbody.innerHTML = '';
-
-    if (res.provisions.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center p-6 text-gray-400">কোন সুদ প্রভিশন রেকর্ড পাওয়া যায়নি।</td></tr>`;
-      return;
-    }
-
-    res.provisions.forEach(p => {
-      const tr = document.createElement('tr');
-      tr.className = 'hover:bg-gray-50';
-      tr.innerHTML = `
-        <td class="p-3.5">
-          <div class="font-bold text-gray-900">${toBn(p.provision_month)}</div>
-          <div class="text-xs text-gray-500">${toBn(p.provision_date)}</div>
-        </td>
-        <td class="p-3.5">
-          <div class="font-bold text-gray-800">${p.emp_name}</div>
-          <div class="text-xs text-gray-500">${p.emp_code} &bull; ${p.designation}</div>
-        </td>
-        <td class="p-3.5">
-          <div class="font-medium text-xs text-gray-800">${p.loan_no}</div>
-          <div class="text-xs text-gray-400">বিতরণ: ${toBn(p.disbursement_date)}</div>
-        </td>
-        <td class="p-3.5 text-center">
-          <span class="px-2 py-0.5 rounded-full text-xs font-bold ${p.applied_rate >= 8 ? 'bg-orange-100 text-orange-800' : 'bg-emerald-100 text-emerald-800'}">
-            ${toBn(p.applied_rate)}%
-          </span>
-        </td>
-        <td class="p-3.5 text-right font-medium text-gray-700">${formatBDT(p.principal_amount_on_date)}</td>
-        <td class="p-3.5 text-right font-bold text-amber-800">${formatBDT(p.interest_amount)}</td>
-        <td class="p-3.5 text-right font-bold text-gray-900">${formatBDT(p.new_interest_balance)}</td>
-        <td class="p-3.5 text-center">
-          <button onclick="deleteProvisionRecord(${p.id})" class="text-red-500 hover:text-red-700 p-1" title="প্রভিশন ডিলিট ও রিভার্স">
-            <i data-lucide="trash-2" class="w-4 h-4"></i>
-          </button>
-        </td>
-      `;
-      tbody.appendChild(tr);
-    });
-
-    if (window.lucide) lucide.createIcons();
+    loadedProvisionRecords = res.provisions || [];
+    filterProvisions();
   } catch (err) {
     console.error('Provisions load error:', err);
   }
+}
+
+function filterProvisions() {
+  const query = (document.getElementById('provisionSearchInput')?.value || '').trim().toLocaleLowerCase();
+  const filtered = loadedProvisionRecords.filter(p => {
+    const searchable = [
+      p.provision_month,
+      p.provision_date,
+      p.emp_name,
+      p.emp_code,
+      p.designation,
+      p.loan_no,
+      p.disbursement_date
+    ].join(' ').toLocaleLowerCase();
+    return searchable.includes(query);
+  });
+
+  const count = document.getElementById('provisionSearchCount');
+  if (count) {
+    count.textContent = query
+      ? `${toBn(filtered.length)} / ${toBn(loadedProvisionRecords.length)} টি প্রভিশন`
+      : `${toBn(loadedProvisionRecords.length)} টি প্রভিশন`;
+  }
+
+  const totalSummary = document.getElementById('provisionsTotalSummary');
+  if (totalSummary) {
+    const totalInt = filtered.reduce((s, p) => s + (p.interest_amount || 0), 0);
+    totalSummary.textContent = `মোট ধার্যকৃত সুদ: ${formatBDT(totalInt)}`;
+  }
+
+  renderProvisionRows(filtered);
+}
+
+function renderProvisionRows(provisions) {
+  const tbody = document.getElementById('provisionsTableBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  if (provisions.length === 0) {
+    const hasSearch = Boolean((document.getElementById('provisionSearchInput')?.value || '').trim());
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center p-6 text-gray-400">${hasSearch ? 'অনুসন্ধানের সাথে মেলে এমন কোনো প্রভিশন রেকর্ড পাওয়া যায়নি।' : 'কোন সুদ প্রভিশন রেকর্ড পাওয়া যায়নি।'}</td></tr>`;
+    return;
+  }
+
+  provisions.forEach(p => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>
+        <div class="font-bold text-gray-900 leading-tight">${toBn(p.provision_month)}</div>
+        <div class="text-[11px] text-gray-500 leading-none mt-0.5">${toBn(p.provision_date)}</div>
+      </td>
+      <td>
+        <div class="font-bold text-gray-800 leading-tight">${p.emp_name}</div>
+        <div class="text-[11px] text-gray-500 leading-none mt-0.5">${p.emp_code} &bull; ${p.designation}</div>
+      </td>
+      <td>
+        <div class="font-medium text-xs text-gray-800 font-mono leading-tight">${p.loan_no}</div>
+        <div class="text-[10px] text-gray-400 leading-none mt-0.5">বিতরণ: ${toBn(p.disbursement_date)}</div>
+      </td>
+      <td class="text-center">
+        <span class="px-2 py-0.5 rounded-full text-[11px] font-bold ${p.applied_rate >= 8 ? 'bg-orange-100 text-orange-800' : 'bg-emerald-100 text-emerald-800'}">
+          ${toBn(p.applied_rate)}%
+        </span>
+      </td>
+      <td class="text-right font-medium text-gray-700 font-mono">${formatBDT(p.principal_amount_on_date)}</td>
+      <td class="text-right font-bold text-amber-800 font-mono">${formatBDT(p.interest_amount)}</td>
+      <td class="text-right font-bold text-gray-900 font-mono">${formatBDT(p.new_interest_balance)}</td>
+      <td class="text-center">
+        <button onclick="deleteProvisionRecord(${p.id})" class="text-red-500 hover:text-red-700 p-0.5" title="প্রভিশন ডিলিট ও রিভার্স">
+          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  if (window.lucide) lucide.createIcons();
 }
 
 function getMonthEndDate(yyyyMm) {
@@ -2552,26 +4353,25 @@ function renderGeneratedBankAdvices() {
   if (visibleAdvices.length > 0) {
     visibleAdvices.forEach(adv => {
       const tr = document.createElement('tr');
-      tr.className = 'hover:bg-gray-50';
       tr.innerHTML = `
-          <td class="p-3.5">
-            <div class="font-bold font-mono text-purple-900">${escapeHtml(adv.advice_no || '')}</div>
-            <div class="text-xs text-gray-500">${toBn(adv.advice_date || '')}</div>
+          <td>
+            <div class="font-bold font-mono text-purple-900 leading-tight text-xs">${escapeHtml(adv.advice_no || '')}</div>
+            <div class="text-[11px] text-gray-500 leading-none mt-0.5">${toBn(adv.advice_date || '')}</div>
           </td>
-          <td class="p-3.5 text-xs text-gray-700 font-mono">${escapeHtml(adv.memo_no || '')}</td>
-          <td class="p-3.5 font-bold text-gray-800">${escapeHtml(adv.target_pbs_name || '')}</td>
-          <td class="p-3.5 text-xs font-semibold text-gray-700">${escapeHtml(adv.period_text || toBn(adv.deduction_month || ''))}</td>
-          <td class="p-3.5 text-center font-bold">${toBn(adv.employee_count)} জন</td>
-          <td class="p-3.5 text-right font-bold text-emerald-800">${formatBDT(adv.total_amount)}</td>
-          <td class="p-3.5 text-center">
-            <button onclick="viewPrintableDocument(${adv.id})" class="px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold flex items-center space-x-1 mx-auto shadow-sm">
-              <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+          <td class="text-xs text-gray-700 font-mono">${escapeHtml(adv.memo_no || '')}</td>
+          <td class="font-bold text-gray-800 text-xs">${escapeHtml(adv.target_pbs_name || '')}</td>
+          <td class="text-xs font-semibold text-gray-700">${escapeHtml(adv.period_text || toBn(adv.deduction_month || ''))}</td>
+          <td class="text-center font-bold text-xs">${toBn(adv.employee_count)} জন</td>
+          <td class="text-right font-bold text-emerald-800 font-mono">${formatBDT(adv.total_amount)}</td>
+          <td class="text-center">
+            <button onclick="viewPrintableDocument(${adv.id})" class="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded border border-emerald-200 text-[11px] font-bold flex items-center space-x-1 mx-auto shadow-sm">
+              <i data-lucide="printer" class="w-3 h-3"></i>
               <span>পত্র / অ্যাডভাইস</span>
             </button>
           </td>
-          <td class="p-3.5 text-center">
-            <button onclick="deleteAdviceRecord(${adv.id})" class="text-red-500 hover:text-red-700 p-1" title="ডিলিট ও কিস্তি অনিষ্পন্ন করা">
-              <i data-lucide="trash-2" class="w-4 h-4"></i>
+          <td class="text-center">
+            <button onclick="deleteAdviceRecord(${adv.id})" class="text-red-500 hover:text-red-700 p-0.5" title="ডিলিট ও কিস্তি অনিষ্পন্ন করা">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
             </button>
           </td>
         `;
@@ -2867,14 +4667,21 @@ async function deleteAdviceRecord(adviceId) {
   }
 }
 
-// 7. PRINTABLE DOCUMENT VIEWER (Bank Advice & PBS Forwarding Letter)
+/// 7. PRINTABLE DOCUMENT VIEWER (Bank Advice & PBS Forwarding Letter)
 async function viewPrintableDocument(adviceId) {
   try {
     const res = await API.get(`/remittances/advices/${adviceId}`);
     if (!res.success) return;
 
     state.selectedDocumentAdvice = res;
+    state.currentDocumentCustomDate = res.advice?.advice_date || new Date().toISOString().split('T')[0];
     state.currentDocView = 'advice'; // default to Bank Advice format
+
+    const dateInput = document.getElementById('docCustomDateInput');
+    if (dateInput) {
+      dateInput.value = state.currentDocumentCustomDate;
+    }
+
     switchDocumentView('advice');
     openModal('printDocumentModal');
 
@@ -2885,6 +4692,13 @@ async function viewPrintableDocument(adviceId) {
     showToast('ডকুমেন্ট লোড করা যায়নি', 'error');
   }
 }
+
+function onDocumentDateChanged(newDate) {
+  if (!newDate) return;
+  state.currentDocumentCustomDate = newDate;
+  renderPrintableDocument();
+}
+window.onDocumentDateChanged = onDocumentDateChanged;
 
 let isDocModalFullscreen = false;
 
@@ -2938,6 +4752,12 @@ function switchDocumentView(viewType) {
   const scrollBody = document.getElementById('printDocumentScrollBody');
   if (scrollBody) scrollBody.scrollTop = 0;
 }
+
+function changeOfficeNoteDateStyle(style) {
+  state.officeNoteDateStyle = style;
+  renderPrintableDocument();
+}
+window.changeOfficeNoteDateStyle = changeOfficeNoteDateStyle;
 
 function printCurrentDocument() {
   const content = document.getElementById('printableDocumentContent');
@@ -3063,42 +4883,118 @@ function renderPrintableDocument() {
     const preparedBy = escapeHtml(ownPbs.bank_advice_prepared_by_name || '');
     const verifiedBy = escapeHtml(ownPbs.bank_advice_verified_by_name || '');
 
+    // Generate unified table rows (borrowers + PBS + bank + account + amount)
+    let unifiedRows = '';
+    let bSerial = 1;
+    if (isCombined && groupedByPbs && groupedByPbs.length > 0) {
+      groupedByPbs.forEach(grp => {
+        (grp.employees || []).forEach(emp => {
+          const mText = formatMonthsList ? formatMonthsList(emp.months) : (emp.months || []).join(', ');
+          const bankBranchStr = `${grp.bankName || ''}${grp.bankBranch ? ', ' + grp.bankBranch : ''}`;
+          unifiedRows += `
+            <tr>
+              <td style="border:1px solid #444;padding:6px 4px;text-align:center">${toBn(bSerial++)}</td>
+              <td style="border:1px solid #444;padding:6px 4px;text-align:center;font-family:monospace;font-weight:700">${escapeHtml(emp.empCode || '')}</td>
+              <td style="border:1px solid #444;padding:6px 5px;font-weight:600">${escapeHtml(emp.empName || '')}</td>
+              <td style="border:1px solid #444;padding:6px 4px">${escapeHtml(emp.designation || '')}</td>
+              <td style="border:1px solid #444;padding:6px 5px">${escapeHtml(grp.pbsName || '')}</td>
+              <td style="border:1px solid #444;padding:6px 4px;font-size:10px">${escapeHtml(bankBranchStr || '-')}</td>
+              <td style="border:1px solid #444;padding:6px 4px;font-family:monospace;font-size:10px;text-align:center">${escapeHtml(grp.accountNo || '-')}</td>
+              <td style="border:1px solid #444;padding:6px 4px;text-align:center">${toBn(mText)}</td>
+              <td style="border:1px solid #444;padding:6px 5px;text-align:right;font-family:monospace;font-weight:700">${formatBDT(emp.totalAmount || 0)}</td>
+            </tr>
+          `;
+        });
+      });
+    } else if (items && items.length > 0) {
+      const empMap = {};
+      items.forEach(it => {
+        if (!empMap[it.emp_code]) {
+          empMap[it.emp_code] = {
+            empCode: it.emp_code,
+            empName: it.emp_name,
+            designation: it.designation,
+            pbsName: it.origin_pbs_name || advice.target_pbs_name || '',
+            bankName: it.origin_bank_name || advice.target_bank_name || '',
+            bankBranch: it.origin_bank_branch || advice.target_bank_branch || '',
+            accountNo: it.origin_account_no || advice.target_account_no || '',
+            months: [],
+            totalAmount: 0
+          };
+        }
+        empMap[it.emp_code].months.push(it.deduction_month);
+        empMap[it.emp_code].totalAmount += it.total_amount;
+      });
+
+      Object.values(empMap).forEach(emp => {
+        const mText = formatMonthsList ? formatMonthsList(emp.months) : (emp.months || []).join(', ');
+        const bankBranchStr = `${emp.bankName || ''}${emp.bankBranch ? ', ' + emp.bankBranch : ''}`;
+        unifiedRows += `
+          <tr>
+            <td style="border:1px solid #444;padding:6px 4px;text-align:center">${toBn(bSerial++)}</td>
+            <td style="border:1px solid #444;padding:6px 4px;text-align:center;font-family:monospace;font-weight:700">${escapeHtml(emp.empCode || '')}</td>
+            <td style="border:1px solid #444;padding:6px 5px;font-weight:600">${escapeHtml(emp.empName || '')}</td>
+            <td style="border:1px solid #444;padding:6px 4px">${escapeHtml(emp.designation || '')}</td>
+            <td style="border:1px solid #444;padding:6px 5px">${escapeHtml(emp.pbsName || '')}</td>
+            <td style="border:1px solid #444;padding:6px 4px;font-size:10px">${escapeHtml(bankBranchStr || '-')}</td>
+            <td style="border:1px solid #444;padding:6px 4px;font-family:monospace;font-size:10px;text-align:center">${escapeHtml(emp.accountNo || '-')}</td>
+            <td style="border:1px solid #444;padding:6px 4px;text-align:center">${toBn(mText)}</td>
+            <td style="border:1px solid #444;padding:6px 5px;text-align:right;font-family:monospace;font-weight:700">${formatBDT(emp.totalAmount || 0)}</td>
+          </tr>
+        `;
+      });
+    }
+
+    const effectiveDate = state.currentDocumentCustomDate || advice.advice_date;
+    const dateStyle = state.officeNoteDateStyle || 'bangla_english';
+    const formattedOfficeNoteDate = formatOfficeNoteDate(effectiveDate, dateStyle);
+
     container.innerHTML = `
       <div style="width:100%;color:#111;font-family:inherit;font-size:12px;line-height:1.55">
         ${renderPbsLetterhead(ownPbs)}
-        <h2 style="margin:14px 0;text-align:center;font-size:18px;font-weight:700;text-decoration:underline">অফিস নোট</h2>
-        <div style="display:flex;justify-content:space-between;gap:24px;margin-bottom:12px">
-          <div><strong>নোট নং:</strong> ${escapeHtml(advice.advice_no || '')}</div>
-          <div><strong>তারিখ:</strong> ${toBengaliCalendarDate(advice.advice_date)}</div>
+        <h2 style="margin:14px 0 10px;text-align:center;font-size:18px;font-weight:700;text-decoration:underline">অফিস নোট</h2>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+          <div style="text-align:right"><strong>তারিখ:</strong> ${formattedOfficeNoteDate}</div>
         </div>
         <p style="margin:8px 0"><strong>বিষয়:</strong> ${isCombined ? 'সকল পল্লী বিদ্যুৎ সমিতিতে কিস্তির অর্থ প্রেরণের ব্যাংক অ্যাডভাইস অনুমোদন প্রসঙ্গে।' : `${escapeHtml(advice.target_pbs_name || '')}-এ কিস্তির অর্থ প্রেরণের ব্যাংক অ্যাডভাইস অনুমোদন প্রসঙ্গে।`}</p>
         <p style="margin:8px 0;text-align:justify">
-          বেতন হতে কর্তনকৃত কিস্তির অর্থ সংশ্লিষ্ট পল্লী বিদ্যুৎ সমিতির ব্যাংক হিসাবে প্রেরণের জন্য ব্যাংক অ্যাডভাইস প্রস্তুত করা হয়েছে। যাচাই ও অনুমোদনের জন্য নোটটি উপস্থাপন করা হলো।
+          বেতন হতে কর্তনকৃত কিস্তির অর্থ সংশ্লিষ্ট পল্লী বিদ্যুৎ সমিতির ব্যাংক হিসাবে প্রেরণের জন্য প্রস্তুতকৃত তালিকা ও ব্যাংক অ্যাডভাইস যাচাই ও অনুমোদনের জন্য নোটটি উপস্থাপন করা হলো।
         </p>
-        <p style="margin:8px 0"><strong>ব্যাংক অ্যাডভাইস নং:</strong> ${escapeHtml(advice.advice_no || '')}
-          &nbsp; <strong>সময়কাল:</strong> ${escapeHtml(periodDisplay)}
-          &nbsp; <strong>সর্বমোট:</strong> ${formatBDT(advice.total_amount || 0)} টাকা
+        <p style="margin:8px 0">
+          <strong>সময়কাল:</strong> ${escapeHtml(periodDisplay)}
+          &nbsp;&nbsp;|&nbsp;&nbsp; <strong>সর্বমোট কর্তনকৃত কিস্তি:</strong> ${formatBDT(advice.total_amount || 0)} টাকা
         </p>
+
+        <!-- ঋণ গ্রহণকারী কর্মকর্তা/কর্মচারীদের তথ্য ও সমিতি/ব্যাংক হিসাবের সমন্বিত একক বিবরণী -->
         <table style="width:100%;border-collapse:collapse;margin:12px 0;font-size:11px">
           <thead>
             <tr style="background:#f3f4f6">
-              <th style="border:1px solid #444;padding:6px">ক্রম</th>
-              <th style="border:1px solid #444;padding:6px">পবিস</th>
-              <th style="border:1px solid #444;padding:6px">ব্যাংক ও শাখা</th>
-              <th style="border:1px solid #444;padding:6px">হিসাব নম্বর</th>
-              <th style="border:1px solid #444;padding:6px;text-align:right">টাকা</th>
+              <th style="border:1px solid #444;padding:6px 4px;width:32px;text-align:center">ক্রম</th>
+              <th style="border:1px solid #444;padding:6px 4px;text-align:center;width:55px">পে আইডি</th>
+              <th style="border:1px solid #444;padding:6px 5px">কর্মকর্তা/কর্মচারীর নাম</th>
+              <th style="border:1px solid #444;padding:6px 4px">পদবী</th>
+              <th style="border:1px solid #444;padding:6px 5px">সংশ্লিষ্ট পবিস</th>
+              <th style="border:1px solid #444;padding:6px 4px">ব্যাংক ও শাখা</th>
+              <th style="border:1px solid #444;padding:6px 4px;text-align:center">হিসাব নম্বর</th>
+              <th style="border:1px solid #444;padding:6px 4px;text-align:center;width:60px">কিস্তির মাস</th>
+              <th style="border:1px solid #444;padding:6px 5px;text-align:right;width:65px">টাকা</th>
             </tr>
           </thead>
-          <tbody>${noteRows}</tbody>
+          <tbody>
+            ${unifiedRows}
+          </tbody>
           <tfoot>
-            <tr>
-              <td colspan="4" style="border:1px solid #444;padding:6px;text-align:right;font-weight:700">সর্বমোট</td>
-              <td style="border:1px solid #444;padding:6px;text-align:right;font-weight:700">${formatBDT(advice.total_amount || 0)}</td>
+            <tr style="background:#fafafa">
+              <td colspan="8" style="border:1px solid #444;padding:6px;text-align:right;font-weight:700">সর্বমোট প্রেরিত অর্থের পরিমাণ:</td>
+              <td style="border:1px solid #444;padding:6px 5px;text-align:right;font-weight:700;font-family:monospace">${formatBDT(advice.total_amount || 0)}</td>
             </tr>
           </tfoot>
         </table>
-        <p style="margin:10px 0">অতএব, উল্লিখিত ব্যাংক অ্যাডভাইস অনুযায়ী অর্থ প্রেরণের প্রয়োজনীয় অনুমোদন প্রদানের জন্য উপস্থাপন করা হলো।</p>
-        <div style="display:flex;justify-content:space-between;gap:48px;margin-top:72px;page-break-inside:avoid">
+
+        <p style="margin:12px 0 6px 0">কথায়: <strong>${escapeHtml(advice.amount_in_words || '')}</strong></p>
+        <p style="margin:10px 0">অতএব, উল্লিখিত বিবরণ অনুযায়ী সংশ্লিষ্ট সমিতি ও ব্যাংক হিসাবে অর্থ প্রেরণের প্রয়োজনীয় অনুমোদন প্রদানের জন্য উপস্থাপন করা হলো।</p>
+
+        <div style="display:flex;justify-content:space-between;gap:48px;margin-top:60px;page-break-inside:avoid">
           <div style="width:42%;text-align:center">
             <div style="border-top:1px solid #111;padding-top:5px;font-weight:700">${preparedBy || '&nbsp;'}</div>
             <div>জুনিয়র অফিসার (হিসাব)</div>
@@ -3114,6 +5010,11 @@ function renderPrintableDocument() {
     `;
     return;
   }
+
+  const effectiveDate = state.currentDocumentCustomDate || advice.advice_date;
+  const bnCalendarDate = toBengaliCalendarDate(effectiveDate);
+  const dateStyle = state.officeNoteDateStyle || 'bangla_english';
+  const formattedDualDate = formatOfficeNoteDate(effectiveDate, dateStyle);
 
   if (state.currentDocView === 'letter') {
     // Official Forwarding Letter
@@ -3162,9 +5063,12 @@ function renderPrintableDocument() {
     container.innerHTML = `
       ${renderPbsLetterhead(ownPbs)}
 
-      <div class="flex justify-between text-xs text-gray-700 font-mono mb-4">
+      <div class="flex justify-between items-start text-xs text-gray-700 font-mono mb-4 pt-1">
         <div><strong>স্মারক নং:</strong> ${advice.memo_no}</div>
-        <div><strong>তারিখ:</strong> ${toBn(advice.advice_date)} খ্রি:</div>
+        <div class="text-right leading-tight">
+          <div class="font-serif">তারিখ: <span class="border-b border-dotted border-black inline-block min-w-[70px] text-center">${bnCalendarDate}</span></div>
+          <div class="mt-0.5 font-mono"><strong>${toBn(effectiveDate)}</strong> খ্রি:</div>
+        </div>
       </div>
 
       <div class="text-sm space-y-1 mb-4 text-gray-800">
@@ -3249,7 +5153,6 @@ function renderPrintableDocument() {
 
     const totalAmount = advice.total_amount;
     const inWords = advice.amount_in_words;
-    const bnCalendarDate = toBengaliCalendarDate(advice.advice_date);
 
     // Build Table Rows matching the official format precisely
     let tableRowsHtml = '';
@@ -3306,7 +5209,7 @@ function renderPrintableDocument() {
           </div>
           <div class="text-right leading-tight">
             <div class="font-serif">তারিখ: <span class="border-b border-dotted border-black inline-block min-w-[70px] text-center">${bnCalendarDate}</span></div>
-            <div class="mt-0.5 font-mono"><strong>${toBn(advice.advice_date)}</strong> খ্রি:</div>
+            <div class="mt-0.5 font-mono"><strong>${toBn(effectiveDate)}</strong> খ্রি:</div>
           </div>
         </div>
 
@@ -4671,9 +6574,154 @@ function printCurrentLedgerTab() {
     printControlSheetDocument();
   } else if (state.activeLedgerSubtab === 'other') {
     printOtherPbs24250Document();
+  } else if (state.activeLedgerSubtab === 'own') {
+    printOwnPbsLedgerDocument();
   } else {
     window.print();
   }
+}
+
+function printOwnPbsLedgerDocument() {
+  const data = state.currentOwnLedgerData;
+  if (!data) {
+    showToast('প্রিন্ট করার জন্য খতিয়ান ডাটা প্রস্তুত নেই।', 'warning');
+    return;
+  }
+
+  // If a specific employee ledger is loaded
+  if (data.employee && data.loanLedgers && data.loanLedgers.length > 0) {
+    currentEmployeeLedgerData = data;
+    printEmployeePortalLedger();
+    return;
+  }
+
+  // Otherwise, print the all-employees summary ledger table
+  const employees = data.employees || [];
+  if (employees.length === 0) {
+    showToast('প্রিন্ট করার জন্য কোনো তথ্য পাওয়া যায়নি।', 'warning');
+    return;
+  }
+
+  const pbsName = state.settings?.own_pbs_name || 'গাজীপুর পল্লী বিদ্যুৎ সমিতি-২';
+  const totalDisb = employees.reduce((s, e) => s + (e.total_disbursed || 0), 0);
+  const totalPaid = employees.reduce((s, e) => s + (e.total_principal_paid || 0), 0);
+  const totalPrinBal = employees.reduce((s, e) => s + (e.principal_balance || 0), 0);
+  const totalIntBal = employees.reduce((s, e) => s + (e.interest_balance || 0), 0);
+  const totalNetBal = employees.reduce((s, e) => s + (e.net_balance || 0), 0);
+
+  let printFrame = document.getElementById('empLedgerPrintFrame');
+  if (printFrame) printFrame.remove();
+
+  printFrame = document.createElement('iframe');
+  printFrame.id = 'empLedgerPrintFrame';
+  printFrame.style.position = 'fixed';
+  printFrame.style.right = '0';
+  printFrame.style.bottom = '0';
+  printFrame.style.width = '0';
+  printFrame.style.height = '0';
+  printFrame.style.border = '0';
+  printFrame.style.visibility = 'hidden';
+  document.body.appendChild(printFrame);
+
+  const doc = printFrame.contentWindow.document;
+  doc.open();
+
+  const rowsTr = employees.map((e, idx) => `
+    <tr>
+      <td style="text-align:center; padding: 5px 6px; border: 1px solid #333; font-family: monospace;">${toBn(idx + 1)}</td>
+      <td style="text-align:center; padding: 5px 6px; border: 1px solid #333; font-family: monospace; font-weight: bold;">${escapeHtml(e.emp_code)}</td>
+      <td style="padding: 5px 8px; border: 1px solid #333;">
+        <div style="font-weight: bold;">${escapeHtml(e.name)}</div>
+        <div style="font-size: 9px; color: #555;">${escapeHtml(e.designation || '')} &bull; ${escapeHtml(e.department || '')}</div>
+      </td>
+      <td style="text-align:center; padding: 5px 6px; border: 1px solid #333; font-family: monospace;">${toBn(e.loan_count || 1)}</td>
+      <td style="text-align:right; padding: 5px 8px; border: 1px solid #333; font-family: monospace;">${formatBDT(e.total_disbursed || 0)}</td>
+      <td style="text-align:right; padding: 5px 8px; border: 1px solid #333; font-family: monospace;">${formatBDT(e.total_principal_paid || 0)}</td>
+      <td style="text-align:right; padding: 5px 8px; border: 1px solid #333; font-family: monospace; font-weight: bold;">${formatBDT(e.principal_balance || 0)}</td>
+      <td style="text-align:right; padding: 5px 8px; border: 1px solid #333; font-family: monospace;">${formatBDT(e.interest_balance || 0)}</td>
+      <td style="text-align:right; padding: 5px 8px; border: 1px solid #333; font-family: monospace; font-weight: bold; background: #f0fdf4;">${formatBDT(e.net_balance || 0)}</td>
+    </tr>
+  `).join('');
+
+  doc.write(`
+    <!DOCTYPE html>
+    <html lang="bn">
+    <head>
+      <meta charset="UTF-8">
+      <title>সকল কর্মকর্তা/কর্মচারীর ঋণ খতিয়ান সারসংক্ষেপ - ${escapeHtml(pbsName)}</title>
+      <style>
+        @page { size: A4 landscape; margin: 10mm; }
+        * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        body { font-family: 'SolaimanLipi', 'Kalpurush', 'Nikosh', 'Arial', sans-serif; color: #111; margin: 0; padding: 10px; font-size: 11px; }
+        .text-center { text-align: center; }
+        .header { border-bottom: 2px double #333; padding-bottom: 8px; margin-bottom: 12px; text-align: center; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 10px; }
+        th { border: 1px solid #333; padding: 6px 8px; background-color: #e2e8f0; font-weight: bold; text-align: center; }
+        td { border: 1px solid #333; }
+        .grand-total td { font-weight: bold; border-top: 2px solid #333; border-bottom: 3px double #333; background-color: #f1f5f9; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h3 style="margin: 0; font-size: 16px;">বাংলাদেশ পল্লী বিদ্যুতায়ন বোর্ড</h3>
+        <h2 style="margin: 3px 0; font-size: 18px;">${escapeHtml(pbsName)}</h2>
+        <h4 style="margin: 3px 0; font-size: 14px; text-decoration: underline;">কর্মকর্তা-কর্মচারী গৃহ ঋণ খতিয়ান সারসংক্ষেপ (Summary Ledger)</h4>
+        <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 11px;">
+          <div><strong>মোট ঋণগ্রহীতা:</strong> ${toBn(employees.length)} জন</div>
+          <div><strong>প্রিন্ট তারিখ:</strong> ${new Date().toLocaleDateString('bn-BD')}</div>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 30px;">#</th>
+            <th style="width: 70px;">পে-আইডি</th>
+            <th>কর্মকর্তা/কর্মচারীর নাম ও পদবী</th>
+            <th style="width: 55px;">ঋণ সংখ্যা</th>
+            <th style="width: 105px; text-align: right;">মোট মঞ্জুরকৃত আসল</th>
+            <th style="width: 100px; text-align: right;">আদায়কৃত আসল</th>
+            <th style="width: 105px; text-align: right;">অবশিষ্ট আসল</th>
+            <th style="width: 100px; text-align: right;">ধার্য সুদ স্থিতি</th>
+            <th style="width: 115px; text-align: right;">সর্বমোট অবশিষ্ট</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsTr}
+        </tbody>
+        <tfoot>
+          <tr class="grand-total">
+            <td colspan="4" style="text-align: right; padding: 6px 10px;">সর্বমোট:</td>
+            <td style="text-align: right; padding: 6px 8px; font-family: monospace;">${formatBDT(totalDisb)}</td>
+            <td style="text-align: right; padding: 6px 8px; font-family: monospace;">${formatBDT(totalPaid)}</td>
+            <td style="text-align: right; padding: 6px 8px; font-family: monospace;">${formatBDT(totalPrinBal)}</td>
+            <td style="text-align: right; padding: 6px 8px; font-family: monospace;">${formatBDT(totalIntBal)}</td>
+            <td style="text-align: right; padding: 6px 8px; font-family: monospace; background: #e6f4ea;">${formatBDT(totalNetBal)}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <div style="margin-top: 45px; display: flex; justify-content: space-between; font-size: 11px; page-break-inside: avoid;">
+        <div style="text-align: center; width: 180px; border-top: 1px dashed #333; padding-top: 5px;">
+          প্রস্তুতকারী
+        </div>
+        <div style="text-align: center; width: 220px; border-top: 1px dashed #333; padding-top: 5px;">
+          জুনিয়র অফিসার (হিসাব) / অফিসার (হিসাব)
+        </div>
+        <div style="text-align: center; width: 220px; border-top: 1px dashed #333; padding-top: 5px;">
+          সহকারী জেনারেল ম্যানেজার (অর্থ-হিসাব)
+        </div>
+      </div>
+    </body>
+    </html>
+  `);
+
+  doc.close();
+
+  setTimeout(() => {
+    printFrame.contentWindow.focus();
+    printFrame.contentWindow.print();
+  }, 350);
 }
 
 function exportCurrentLedgerTabExcel() {
@@ -4716,6 +6764,8 @@ async function loadOwnPbsLedger(targetEmployeeId) {
     const res = await API.get('/reports/employee-loan-ledger', employeeId ? { employeeId } : {});
     if (!res.success) return;
 
+    state.currentOwnLedgerData = res;
+
     // Populate employee select dropdown if empty or has 1 option
     if (res.employees && sel && (sel.options.length <= 1 || !sel.querySelector(`option[value="${res.employees[0]?.id}"]`))) {
       const currentSelected = employeeId || sel.value;
@@ -4734,23 +6784,50 @@ async function loadOwnPbsLedger(targetEmployeeId) {
       const hasMultipleLoans = res.loanLedgers.length > 1;
 
       let html = `
-        <!-- Employee Header -->
-        <div class="p-5 bg-gradient-to-r from-emerald-800 to-emerald-700 text-white flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div>
-            <div class="flex items-center space-x-2 mb-1">
-              <button onclick="loadOwnPbsLedger('')" class="text-xs bg-white/20 hover:bg-white/30 text-white px-2.5 py-1 rounded-lg border border-white/30 font-semibold shadow-sm transition inline-flex items-center space-x-1 cursor-pointer">
-                <span>&larr;</span>
-                <span>সকল কর্মচারী তালিকায় ফিরুন</span>
-              </button>
-              <span class="text-xs font-semibold text-emerald-200 uppercase tracking-wider">কর্মচারীভিত্তিক সম্পূর্ণ ঋণ খতিয়ান</span>
+        <!-- Professional Employee Profile Header -->
+        <div class="bg-gradient-to-r from-emerald-950 via-emerald-900 to-teal-950 text-white rounded-t-xl p-5 shadow-sm border-b-2 border-emerald-600/50">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <div class="flex items-center space-x-2 mb-2">
+                <button onclick="loadOwnPbsLedger('')" class="text-xs bg-white/10 hover:bg-white/20 text-emerald-100 hover:text-white px-3 py-1.5 rounded-lg border border-white/20 font-medium shadow-sm transition inline-flex items-center space-x-1.5 cursor-pointer">
+                  <span>&larr;</span>
+                  <span>সকল কর্মচারী তালিকায় ফিরুন</span>
+                </button>
+                <span class="text-[11px] font-bold tracking-wider text-emerald-300 uppercase bg-emerald-800/60 px-2.5 py-0.5 rounded-full border border-emerald-700/50">
+                  কর্মচারীভিত্তিক সম্পূর্ণ ঋণ খতিয়ান
+                </span>
+              </div>
+              <div class="flex items-baseline space-x-2">
+                <h3 class="text-2xl font-black text-white tracking-tight">${emp.name}</h3>
+                <span class="font-mono text-emerald-300 text-sm font-bold bg-white/10 px-2 py-0.5 rounded">আইডি: ${emp.emp_code}</span>
+              </div>
+              <p class="text-xs text-emerald-200/90 mt-1 flex items-center space-x-2">
+                <span class="font-medium">${emp.designation}</span>
+                <span>&bull;</span>
+                <span>${emp.department}</span>
+                ${emp.mobile ? `<span>&bull;</span><span>${emp.mobile}</span>` : ''}
+              </p>
             </div>
-            <h3 class="text-xl font-bold mt-1">${emp.name} <span class="font-mono text-emerald-200 text-base">(পে আইডি: ${emp.emp_code})</span></h3>
-            <p class="text-xs text-emerald-200 mt-0.5">${emp.designation} &bull; ${emp.department}</p>
-          </div>
-          <div class="bg-white/10 rounded-xl p-3 text-right">
-            <div class="text-xs text-emerald-200">মোট ঋণ সংখ্যা: ${toBn(gt.loanCount)} টি</div>
-            <div class="text-xl font-extrabold text-white mt-1">${formatBDT(gt.netBalance)}</div>
-            <div class="text-xs text-emerald-200">আসল: ${formatBDT(gt.principalBalance)} | সুদ: ${formatBDT(gt.interestBalance)}</div>
+            
+            <!-- Quick Summary KPI Pill -->
+            <div class="bg-black/25 backdrop-blur-sm rounded-xl p-3.5 border border-white/10 flex items-center divide-x divide-white/15 shadow-inner">
+              <div class="pr-4 text-center">
+                <div class="text-[10px] text-emerald-300 font-semibold uppercase tracking-wider">মোট ঋণ</div>
+                <div class="text-lg font-bold text-white mt-0.5">${toBn(gt.loanCount)} টি</div>
+              </div>
+              <div class="px-4 text-center">
+                <div class="text-[10px] text-emerald-300 font-semibold uppercase tracking-wider">অবশিষ্ট আসল</div>
+                <div class="text-base font-bold text-blue-200 mt-0.5 font-mono">${formatBDT(gt.principalBalance)}</div>
+              </div>
+              <div class="px-4 text-center">
+                <div class="text-[10px] text-emerald-300 font-semibold uppercase tracking-wider">অবশিষ্ট সুদ</div>
+                <div class="text-base font-bold text-amber-200 mt-0.5 font-mono">${formatBDT(gt.interestBalance)}</div>
+              </div>
+              <div class="pl-4 text-right">
+                <div class="text-[10px] text-emerald-200 font-bold uppercase tracking-wider">সর্বমোট বকেয়া স্থিতি</div>
+                <div class="text-xl font-extrabold text-white mt-0.5 font-mono drop-shadow-sm">${formatBDT(gt.netBalance)}</div>
+              </div>
+            </div>
           </div>
         </div>
       `;
@@ -4758,26 +6835,29 @@ async function loadOwnPbsLedger(targetEmployeeId) {
       // PBS-wise summary cards (shown only when multiple PBS loans)
       if (hasMultiplePbs) {
         html += `
-          <div class="p-4 bg-amber-50 border-b border-amber-200">
-            <div class="text-xs font-bold text-amber-800 uppercase tracking-wider mb-2">★ পবিস-ওয়ারি সারসংক্ষেপ (PBS-wise Summary)</div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          <div class="p-4 bg-slate-50 border-b border-gray-200">
+            <div class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2 flex items-center space-x-1.5">
+              <span class="w-2 h-2 rounded-full bg-emerald-600"></span>
+              <span>পবিস-ওয়ারি সারসংক্ষেপ (PBS-wise Breakdown)</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               ${res.pbsSummary.map(pbs => `
-                <div class="bg-white rounded-lg p-3 border ${pbs.loanSourceType === 'OWN_PBS' ? 'border-emerald-200' : 'border-amber-200'} shadow-sm">
-                  <div class="flex items-center justify-between mb-2">
-                    <span class="font-bold text-xs ${pbs.loanSourceType === 'OWN_PBS' ? 'text-emerald-800' : 'text-amber-800'}">${pbs.pbsName}</span>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded ${pbs.loanSourceType === 'OWN_PBS' ? 'badge-own' : 'badge-other'}">${pbs.loanSourceType === 'OWN_PBS' ? 'নিজস্ব' : 'অন্য পবিস'}</span>
+                <div class="bg-white rounded-xl p-3.5 border ${pbs.loanSourceType === 'OWN_PBS' ? 'border-emerald-300 shadow-sm' : 'border-amber-300 shadow-sm'}">
+                  <div class="flex items-center justify-between mb-2 pb-2 border-b border-gray-100">
+                    <span class="font-bold text-xs ${pbs.loanSourceType === 'OWN_PBS' ? 'text-emerald-900' : 'text-amber-900'}">${pbs.pbsName}</span>
+                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${pbs.loanSourceType === 'OWN_PBS' ? 'badge-own' : 'badge-other'}">${pbs.loanSourceType === 'OWN_PBS' ? 'অত্র সমিতি' : 'অন্য পবিস'}</span>
                   </div>
-                  <div class="space-y-0.5 text-[11px] text-gray-600">
-                    <div class="flex justify-between"><span>মঞ্জুরকৃত আসল:</span><strong>${formatBDT(pbs.totalDisbursed)}</strong></div>
-                    <div class="flex justify-between"><span>আসল পরিশোধ:</span><strong class="text-emerald-700">${formatBDT(pbs.totalPrincipalPaid)}</strong></div>
-                    <div class="flex justify-between"><span>অবশিষ্ট আসল:</span><strong class="text-blue-800">${formatBDT(pbs.principalBalance)}</strong></div>
+                  <div class="space-y-1 text-xs text-gray-600 font-sans">
+                    <div class="flex justify-between"><span>মঞ্জুরকৃত আসল:</span><strong class="font-mono text-gray-900">${formatBDT(pbs.totalDisbursed)}</strong></div>
+                    <div class="flex justify-between"><span>আসল পরিশোধ:</span><strong class="font-mono text-emerald-700">${formatBDT(pbs.totalPrincipalPaid)}</strong></div>
+                    <div class="flex justify-between"><span>অবশিষ্ট আসল:</span><strong class="font-mono text-blue-900">${formatBDT(pbs.principalBalance)}</strong></div>
                     ${pbs.loanSourceType === 'OWN_PBS' ? `
-                    <div class="flex justify-between"><span>ধার্যকৃত সুদ:</span><strong class="text-orange-700">${formatBDT(pbs.totalInterestProvisioned)}</strong></div>
-                    <div class="flex justify-between"><span>সুদ পরিশোধ:</span><strong class="text-amber-700">${formatBDT(pbs.totalInterestPaid)}</strong></div>
-                    <div class="flex justify-between"><span>অবশিষ্ট সুদ:</span><strong class="text-amber-800">${formatBDT(pbs.interestBalance)}</strong></div>
+                    <div class="flex justify-between"><span>ধার্যকৃত সুদ:</span><strong class="font-mono text-orange-700">${formatBDT(pbs.totalInterestProvisioned)}</strong></div>
+                    <div class="flex justify-between"><span>সুদ পরিশোধ:</span><strong class="font-mono text-amber-700">${formatBDT(pbs.totalInterestPaid)}</strong></div>
+                    <div class="flex justify-between"><span>অবশিষ্ট সুদ:</span><strong class="font-mono text-amber-800">${formatBDT(pbs.interestBalance)}</strong></div>
                     ` : ''}
-                    <div class="flex justify-between border-t border-gray-200 pt-1 mt-1 font-bold">
-                      <span>মোট অবশিষ্ট:</span><strong class="text-gray-900">${formatBDT(pbs.netBalance)}</strong>
+                    <div class="flex justify-between border-t border-gray-200 pt-1.5 mt-1 font-bold text-sm bg-gray-50 px-2 py-1 rounded">
+                      <span class="text-gray-800">মোট অবশিষ্ট:</span><strong class="font-mono text-emerald-900">${formatBDT(pbs.netBalance)}</strong>
                     </div>
                   </div>
                 </div>
@@ -4792,120 +6872,116 @@ async function loadOwnPbsLedger(targetEmployeeId) {
         const loan = ll.loan;
         const sub = ll.subtotal;
         const isOwn = loan.loan_source_type === 'OWN_PBS';
-        const borderColor = isOwn ? 'border-emerald-400' : 'border-amber-400';
-        const bgColor = isOwn ? 'bg-emerald-50' : 'bg-amber-50';
-        const badgeClass = isOwn ? 'badge-own' : 'badge-other';
         const loanNo = idx + 1;
 
         html += `
           <!-- LOAN #${loanNo}: ${loan.loan_no} -->
-          <div class="border-t-4 ${borderColor}">
-            <!-- Loan Header -->
-            <div class="p-4 ${bgColor} flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div>
-                <div class="flex items-center gap-2 flex-wrap">
-                  <span class="text-xs font-extrabold text-gray-600 uppercase">ঋণ #${toBn(loanNo)}</span>
-                  <span class="font-bold font-mono text-base ${isOwn ? 'text-emerald-900' : 'text-amber-900'}">${loan.loan_no}</span>
-                  <span class="px-2 py-0.5 text-xs rounded font-semibold ${badgeClass}">${loan.origin_pbs_name}</span>
-                  <span class="text-xs text-gray-700 font-bold bg-white/70 px-2 py-0.5 rounded border border-gray-300">${loan.loan_lot_name}</span>
-                  <span class="px-2 py-0.5 text-[10px] rounded ${loan.status === 'ACTIVE' ? 'badge-active' : 'badge-closed'}">${loan.status === 'ACTIVE' ? 'সক্রিয়' : 'পরিশোধিত'}</span>
-                </div>
-                <div class="text-xs text-gray-600 mt-1">
-                  মঞ্জুরি: ${loan.sanction_no || 'N/A'} | বিতরণ: ${toBn(loan.disbursement_date)} | সুদ: ${isOwn ? toBn(loan.interest_rate) + '% সরল' : 'প্রভিশন প্রযোজ্য নয়'}
-                </div>
+          <div class="border-t-2 border-slate-300">
+            <!-- Loan Compact Modern Info Bar -->
+            <div class="px-4 py-2.5 bg-slate-100/90 border-b border-slate-200 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-[11px] font-black uppercase tracking-wider text-slate-700 bg-white px-2 py-0.5 rounded border border-slate-300">
+                  ঋণ #${toBn(loanNo)}
+                </span>
+                <span class="font-mono font-bold text-sm text-slate-900 bg-white px-2.5 py-0.5 rounded border border-slate-300 shadow-2xs">
+                  ${loan.loan_no}
+                </span>
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${isOwn ? 'badge-own' : 'badge-other'}">
+                  ${loan.origin_pbs_name}
+                </span>
+                <span class="text-xs font-bold bg-white px-2 py-0.5 rounded border border-slate-300 text-slate-700">
+                  ${loan.loan_lot_name}
+                </span>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${loan.status === 'ACTIVE' ? 'badge-active' : 'badge-closed'}">
+                  ${loan.status === 'ACTIVE' ? 'সক্রিয়' : 'পরিশোধিত'}
+                </span>
+                <span class="text-xs text-slate-500 font-medium ml-1">
+                  মঞ্জুরি: <strong class="text-slate-700">${loan.sanction_no || 'N/A'}</strong> | বিতরণ: <strong class="text-slate-700">${toBn(loan.disbursement_date)}</strong> | সুদ: <strong class="text-slate-700">${isOwn ? toBn(loan.interest_rate) + '% সরল' : 'প্রভিশন প্রযোজ্য নয়'}</strong>
+                </span>
               </div>
-              <div class="text-right">
-                <div class="text-xs text-gray-500">মঞ্জুরকৃত আসল</div>
-                <div class="font-bold text-gray-900">${formatBDT(loan.disbursed_amount)}</div>
-                <div class="text-xs text-gray-500 mt-0.5">মাসিক কিস্তি: ${formatBDT(loan.monthly_installment)}</div>
+              <div class="flex items-center space-x-3 text-xs self-end md:self-auto">
+                <div class="bg-white px-2.5 py-1 rounded border border-slate-200 shadow-2xs">
+                  <span class="text-slate-500 text-[10px] block">মঞ্জুরকৃত আসল</span>
+                  <span class="font-mono font-bold text-slate-900">${formatBDT(loan.disbursed_amount)}</span>
+                </div>
+                <div class="bg-white px-2.5 py-1 rounded border border-slate-200 shadow-2xs">
+                  <span class="text-slate-500 text-[10px] block">মাসিক কিস্তি</span>
+                  <span class="font-mono font-bold text-emerald-800">${formatBDT(loan.monthly_installment)}</span>
+                </div>
               </div>
             </div>
 
-            <!-- Ledger Table -->
+            <!-- Excel Grid Ledger Table -->
             <div class="overflow-x-auto">
-              <table class="w-full text-left border-collapse text-xs">
+              <table class="excel-grid-table w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr class="table-header text-gray-700 font-semibold border-b">
-                    <th class="p-2.5">তারিখ</th>
-                    <th class="p-2.5">বিবরণ</th>
-                    <th class="p-2.5">ভাউচার</th>
-                    <th class="p-2.5 text-right bg-blue-50/50">ডেবিট আসল</th>
-                    <th class="p-2.5 text-right bg-emerald-50/50">ক্রেডিট আসল</th>
+                  <tr class="table-header font-bold text-slate-800 border-b">
+                    <th style="width: 85px;" class="text-center">তারিখ</th>
+                    <th>বিবরণ ও বিবরণী</th>
+                    <th style="width: 110px;" class="text-center font-mono">ভাউচার</th>
+                    <th style="width: 105px;" class="text-right bg-blue-50/70 text-blue-950">ডেবিট আসল</th>
+                    <th style="width: 105px;" class="text-right bg-emerald-50/70 text-emerald-950">ক্রেডিট আসল</th>
                     ${isOwn ? `
-                    <th class="p-2.5 text-right bg-orange-50/50">ডেবিট সুদ</th>
-                    <th class="p-2.5 text-right bg-amber-50/50">ক্রেডিট সুদ</th>
+                    <th style="width: 95px;" class="text-right bg-orange-50/70 text-orange-950">ডেবিট সুদ</th>
+                    <th style="width: 95px;" class="text-right bg-amber-50/70 text-amber-950">ক্রেডিট সুদ</th>
                     ` : ''}
-                    <th class="p-2.5 text-right text-blue-900 font-bold">আসল স্থিতি</th>
-                    ${isOwn ? `<th class="p-2.5 text-right text-amber-900 font-bold">সুদ স্থিতি</th>` : ''}
-                    <th class="p-2.5 text-right text-emerald-950 font-extrabold">মোট স্থিতি</th>
+                    <th style="width: 115px;" class="text-right font-bold text-blue-900 bg-blue-50/30">অবশিষ্ট আসল</th>
+                    ${isOwn ? `<th style="width: 105px;" class="text-right font-bold text-amber-900 bg-amber-50/30">অবশিষ্ট সুদ</th>` : ''}
+                    <th style="width: 125px;" class="text-right font-bold text-emerald-950 bg-emerald-100/50">মোট স্থিতি</th>
                   </tr>
                 </thead>
-                <tbody class="divide-y divide-gray-100 font-mono">
+                <tbody class="font-mono">
                   ${ll.entries.map(e => {
                     const isPrior = e.type && e.type.startsWith('PRIOR_');
-                    const rowBg = e.type === 'DISBURSEMENT' ? 'bg-blue-50/40' : e.type === 'INTEREST_PROVISION' ? 'bg-orange-50/30' : isPrior ? 'bg-purple-50/40' : '';
+                    const isDisb = e.type === 'DISBURSEMENT';
+                    const isInt = e.type === 'INTEREST_PROVISION';
+                    const isBank = e.repaymentMethod === 'BANK_DEPOSIT';
+                    const isCash = e.repaymentMethod === 'CASH';
+                    const isLumpsum = e.repaymentMethod === 'LUMPSUM_SETTLEMENT';
+                    const isInterPbs = e.repaymentMethod === 'INTER_PBS_COLLECTION';
                     return `
-                    <tr class="hover:bg-gray-50 ${rowBg}">
-                      <td class="p-2.5 font-medium">${toBn(e.date)}</td>
-                      <td class="p-2.5 font-sans font-medium text-gray-800">
-                        ${isPrior ? '<span class="inline-block px-1.5 py-0.5 rounded text-[10px] bg-purple-100 text-purple-800 font-bold mr-1">প্রারম্ভিক</span>' : ''}
+                    <tr>
+                      <td class="text-center font-medium">${toBn(e.date)}</td>
+                      <td class="font-sans font-medium text-slate-800">
+                        ${isPrior ? '<span class="inline-block px-1.5 py-0.2 rounded text-[10px] bg-purple-100 text-purple-800 font-bold mr-1">প্রারম্ভিক</span>' : ''}
+                        ${isDisb ? '<span class="inline-block px-1.5 py-0.2 rounded text-[10px] bg-blue-100 text-blue-800 font-bold mr-1">বিতরণ</span>' : ''}
+                        ${isInt ? '<span class="inline-block px-1.5 py-0.2 rounded text-[10px] bg-amber-100 text-amber-800 font-bold mr-1">সুদ</span>' : ''}
+                        ${isBank ? '<span class="inline-block px-1.5 py-0.2 rounded text-[10px] bg-sky-100 text-sky-800 font-bold mr-1">ব্যাংক জমা</span>' : ''}
+                        ${isCash ? '<span class="inline-block px-1.5 py-0.2 rounded text-[10px] bg-emerald-100 text-emerald-800 font-bold mr-1">নগদ জমা</span>' : ''}
+                        ${isLumpsum ? '<span class="inline-block px-1.5 py-0.2 rounded text-[10px] bg-indigo-100 text-indigo-800 font-bold mr-1">এককালীন সমন্বয়</span>' : ''}
+                        ${isInterPbs ? '<span class="inline-block px-1.5 py-0.2 rounded text-[10px] bg-purple-100 text-purple-800 font-bold mr-1">অন্য পবিস কালেকশন</span>' : ''}
                         ${e.description}
                       </td>
-                      <td class="p-2.5 text-gray-500 text-[11px] font-mono">${e.voucher}</td>
-                      <td class="p-2.5 text-right text-blue-800">${e.debitPrincipal > 0 ? formatBDT(e.debitPrincipal) : '—'}</td>
-                      <td class="p-2.5 text-right text-emerald-700">${e.creditPrincipal > 0 ? formatBDT(e.creditPrincipal) : '—'}</td>
+                      <td class="text-center text-slate-500 text-[11px] font-mono">${e.voucher || '—'}</td>
+                      <td class="text-right text-blue-900 font-medium">${e.debitPrincipal > 0 ? formatBDT(e.debitPrincipal) : '—'}</td>
+                      <td class="text-right text-emerald-700 font-medium">${e.creditPrincipal > 0 ? formatBDT(e.creditPrincipal) : '—'}</td>
                       ${isOwn ? `
-                      <td class="p-2.5 text-right text-orange-800">${e.debitInterest > 0 ? formatBDT(e.debitInterest) : '—'}</td>
-                      <td class="p-2.5 text-right text-amber-700">${e.creditInterest > 0 ? formatBDT(e.creditInterest) : '—'}</td>
+                      <td class="text-right text-orange-800 font-medium">${e.debitInterest > 0 ? formatBDT(e.debitInterest) : '—'}</td>
+                      <td class="text-right text-amber-700 font-medium">${e.creditInterest > 0 ? formatBDT(e.creditInterest) : '—'}</td>
                       ` : ''}
-                      <td class="p-2.5 text-right font-bold text-blue-900">${formatBDT(e.principalBalance)}</td>
-                      ${isOwn ? `<td class="p-2.5 text-right font-bold text-amber-900">${formatBDT(e.interestBalance)}</td>` : ''}
-                      <td class="p-2.5 text-right font-bold text-emerald-800 bg-emerald-50/30">${formatBDT(e.netBalance)}</td>
+                      <td class="text-right font-bold text-blue-900 bg-blue-50/20">${formatBDT(e.principalBalance)}</td>
+                      ${isOwn ? `<td class="text-right font-bold text-amber-900 bg-amber-50/20">${formatBDT(e.interestBalance)}</td>` : ''}
+                      <td class="text-right font-bold text-emerald-950 bg-emerald-50/60">${formatBDT(e.netBalance)}</td>
                     </tr>`;
                   }).join('')}
                 </tbody>
+                <tfoot>
+                  <tr class="bg-slate-200/80 font-bold text-slate-900 border-t-2 border-b-2 border-slate-400">
+                    <td colspan="3" class="text-right font-sans font-extrabold pr-3">
+                      ★ সমাপ্তি জের (${loan.loan_lot_name}):
+                    </td>
+                    <td class="text-right font-mono">${formatBDT(sub.totalDisbursed)}</td>
+                    <td class="text-right font-mono text-emerald-700">${formatBDT(sub.totalPrincipalPaid)}</td>
+                    ${isOwn ? `
+                    <td class="text-right font-mono text-orange-800">${formatBDT(sub.totalInterestProvisioned)}</td>
+                    <td class="text-right font-mono text-amber-700">${formatBDT(sub.totalInterestPaid)}</td>
+                    ` : ''}
+                    <td class="text-right font-mono text-blue-900 font-bold bg-blue-100/50">${formatBDT(sub.principalBalance)}</td>
+                    ${isOwn ? `<td class="text-right font-mono text-amber-900 font-bold bg-amber-100/50">${formatBDT(sub.interestBalance)}</td>` : ''}
+                    <td class="text-right font-mono text-emerald-950 font-black text-sm bg-emerald-200/60">${formatBDT(sub.netBalance)}</td>
+                  </tr>
+                </tfoot>
               </table>
-            </div>
-
-            <!-- Loan Subtotal Row -->
-            <div class="p-3 bg-gray-100 border-t-2 border-dashed border-gray-300 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-xs">
-              <div class="font-extrabold text-gray-700 col-span-2 sm:col-span-4 lg:col-span-1 flex items-center">
-                ★ লট / ঋণ সাব-টোটাল (${loan.loan_lot_name})
-              </div>
-              <div class="text-center">
-                <div class="text-gray-500">মঞ্জুরকৃত আসল</div>
-                <div class="font-bold text-gray-900">${formatBDT(sub.totalDisbursed)}</div>
-              </div>
-              <div class="text-center">
-                <div class="text-gray-500">আসল পরিশোধ</div>
-                <div class="font-bold text-emerald-700">${formatBDT(sub.totalPrincipalPaid)}</div>
-              </div>
-              <div class="text-center">
-                <div class="text-gray-500">অবশিষ্ট আসল</div>
-                <div class="font-bold text-blue-800">${formatBDT(sub.principalBalance)}</div>
-              </div>
-              ${isOwn ? `
-              <div class="text-center">
-                <div class="text-gray-500">ধার্যকৃত সুদ</div>
-                <div class="font-bold text-orange-700">${formatBDT(sub.totalInterestProvisioned)}</div>
-              </div>
-              <div class="text-center">
-                <div class="text-gray-500">সুদ আদায়</div>
-                <div class="font-bold text-amber-700">${formatBDT(sub.totalInterestPaid)}</div>
-              </div>
-              <div class="text-center">
-                <div class="text-gray-500">অবশিষ্ট সুদ</div>
-                <div class="font-bold text-amber-800">${formatBDT(sub.interestBalance)}</div>
-              </div>
-              ` : `
-              <div class="text-center col-span-3 text-gray-400 italic flex items-center justify-center text-[11px]">
-                (অন্য পবিস ঋণ: সুদ প্রভিশন প্রযোজ্য নয়)
-              </div>
-              `}
-              <div class="text-center border-l-2 border-gray-400 pl-2">
-                <div class="text-gray-600 font-bold">মোট অবশিষ্ট</div>
-                <div class="font-extrabold text-gray-900 text-sm">${formatBDT(sub.netBalance)}</div>
-              </div>
             </div>
           </div>
         `;
@@ -4914,33 +6990,36 @@ async function loadOwnPbsLedger(targetEmployeeId) {
       // Grand Total section (shown if multiple loans)
       if (hasMultipleLoans) {
         html += `
-          <!-- Grand Total -->
-          <div class="p-4 bg-emerald-900 text-white">
-            <div class="text-xs font-bold uppercase tracking-wider text-emerald-300 mb-3">★ সর্বমোট গ্র্যান্ড টোটাল (${toBn(gt.loanCount)} টি ঋণের সম্মিলিত স্থিতি)</div>
-            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
-              <div class="bg-white/10 rounded-lg p-2 text-center">
-                <div class="text-emerald-300 text-xs">মোট মঞ্জুরকৃত আসল</div>
-                <div class="font-bold text-white">${formatBDT(gt.totalDisbursed)}</div>
+          <!-- Grand Total Summary Bar -->
+          <div class="p-4 bg-gradient-to-r from-emerald-950 to-teal-950 text-white border-t-2 border-emerald-500">
+            <div class="text-xs font-bold uppercase tracking-wider text-emerald-300 mb-3 flex items-center space-x-1.5">
+              <span>★</span>
+              <span>সর্বমোট সম্মিলিত গ্র্যান্ড টোটাল (${toBn(gt.loanCount)} টি ঋণের সম্মিলিত স্থিতি)</span>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs">
+              <div class="bg-white/10 rounded-lg p-2.5 text-center border border-white/10">
+                <div class="text-emerald-300 text-[11px]">মোট মঞ্জুরকৃত আসল</div>
+                <div class="font-bold font-mono text-sm text-white mt-0.5">${formatBDT(gt.totalDisbursed)}</div>
               </div>
-              <div class="bg-white/10 rounded-lg p-2 text-center">
-                <div class="text-emerald-300 text-xs">মোট আসল পরিশোধ</div>
-                <div class="font-bold text-emerald-300">${formatBDT(gt.totalPrincipalPaid)}</div>
+              <div class="bg-white/10 rounded-lg p-2.5 text-center border border-white/10">
+                <div class="text-emerald-300 text-[11px]">মোট আসল পরিশোধ</div>
+                <div class="font-bold font-mono text-sm text-emerald-300 mt-0.5">${formatBDT(gt.totalPrincipalPaid)}</div>
               </div>
-              <div class="bg-white/10 rounded-lg p-2 text-center">
-                <div class="text-emerald-300 text-xs">মোট অবশিষ্ট আসল</div>
-                <div class="font-bold text-blue-300">${formatBDT(gt.principalBalance)}</div>
+              <div class="bg-white/10 rounded-lg p-2.5 text-center border border-white/10">
+                <div class="text-emerald-300 text-[11px]">মোট অবশিষ্ট আসল</div>
+                <div class="font-bold font-mono text-sm text-blue-200 mt-0.5">${formatBDT(gt.principalBalance)}</div>
               </div>
-              <div class="bg-white/10 rounded-lg p-2 text-center">
-                <div class="text-emerald-300 text-xs">মোট ধার্যকৃত সুদ</div>
-                <div class="font-bold text-orange-300">${formatBDT(gt.totalInterestProvisioned)}</div>
+              <div class="bg-white/10 rounded-lg p-2.5 text-center border border-white/10">
+                <div class="text-emerald-300 text-[11px]">মোট ধার্যকৃত সুদ</div>
+                <div class="font-bold font-mono text-sm text-orange-200 mt-0.5">${formatBDT(gt.totalInterestProvisioned)}</div>
               </div>
-              <div class="bg-white/10 rounded-lg p-2 text-center">
-                <div class="text-emerald-300 text-xs">মোট সুদ আদায়</div>
-                <div class="font-bold text-amber-300">${formatBDT(gt.totalInterestPaid)}</div>
+              <div class="bg-white/10 rounded-lg p-2.5 text-center border border-white/10">
+                <div class="text-emerald-300 text-[11px]">মোট সুদ আদায়</div>
+                <div class="font-bold font-mono text-sm text-amber-200 mt-0.5">${formatBDT(gt.totalInterestPaid)}</div>
               </div>
-              <div class="bg-white/20 rounded-lg p-2 text-center border-2 border-white/30">
-                <div class="text-emerald-200 text-xs font-bold">সর্বমোট অবশিষ্ট</div>
-                <div class="font-extrabold text-white text-lg">${formatBDT(gt.netBalance)}</div>
+              <div class="bg-emerald-800/80 rounded-lg p-2.5 text-center border-2 border-emerald-400/80 shadow-md">
+                <div class="text-emerald-200 text-[11px] font-bold">সর্বমোট বকেয়া স্থিতি</div>
+                <div class="font-extrabold font-mono text-white text-base mt-0.5">${formatBDT(gt.netBalance)}</div>
               </div>
             </div>
           </div>
@@ -4949,6 +7028,14 @@ async function loadOwnPbsLedger(targetEmployeeId) {
 
       container.innerHTML = html;
       if (window.lucide) lucide.createIcons();
+
+      // Scroll smoothly to ledger table
+      setTimeout(() => {
+        const targetCard = document.getElementById('subtabContentOwn');
+        if (targetCard) {
+          targetCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 100);
     } else {
       if (sel) sel.value = '';
       // Summary table of all employees with loans
@@ -4971,41 +7058,40 @@ async function loadOwnPbsLedger(targetEmployeeId) {
         </div>
 
         <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse text-sm">
+          <table class="excel-grid-table w-full text-left border-collapse text-sm">
             <thead>
               <tr class="table-header text-gray-700 font-semibold border-b">
-                <th class="p-3.5">পে আইডি</th>
-                <th class="p-3.5">কর্মকর্তা/কর্মচারীর নাম ও পদবী</th>
-                <th class="p-3.5 text-center">ঋণ সংখ্যা</th>
-                <th class="p-3.5 text-right">মোট মঞ্জুরকৃত আসল</th>
-                <th class="p-3.5 text-right">আদায়কৃত আসল</th>
-                <th class="p-3.5 text-right">অবশিষ্ট আসল</th>
-                <th class="p-3.5 text-right">ধার্য সুদ স্থিতি</th>
-                <th class="p-3.5 text-right font-bold">মোট অবশিষ্ট</th>
-                <th class="p-3.5 text-center">সম্পূর্ণ লেজার</th>
+                <th class="p-2">পে আইডি</th>
+                <th class="p-2">কর্মকর্তা/কর্মচারীর নাম ও পদবী</th>
+                <th class="p-2 text-center">ঋণ সংখ্যা</th>
+                <th class="p-2 text-right">মোট মঞ্জুরকৃত আসল</th>
+                <th class="p-2 text-right">আদায়কৃত আসল</th>
+                <th class="p-2 text-right">অবশিষ্ট আসল</th>
+                <th class="p-2 text-right">ধার্য সুদ স্থিতি</th>
+                <th class="p-2 text-right font-bold">মোট অবশিষ্ট</th>
+                <th class="p-2 text-center">সম্পূর্ণ লেজার</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-gray-100">
+            <tbody>
               ${employees.map(e => `
-                <tr class="hover:bg-gray-50">
-                  <td class="p-3.5 font-bold font-mono text-emerald-800">${e.emp_code}</td>
-                  <td class="p-3.5">
-                    <div class="font-bold text-gray-900">${e.name}</div>
-                    <div class="text-xs text-gray-500">${e.designation} &bull; ${e.department}</div>
+                <tr>
+                  <td class="font-bold font-mono text-emerald-800">${e.emp_code}</td>
+                  <td>
+                    <div class="font-bold text-gray-900 leading-tight">${e.name}</div>
+                    <div class="text-[11px] text-gray-500 leading-none mt-0.5">${e.designation} &bull; ${e.department}</div>
                   </td>
-                  <td class="p-3.5 text-center">
-                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${e.loan_count > 1 ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}">
+                  <td class="text-center">
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-bold ${e.loan_count > 1 ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}">
                       ${toBn(e.loan_count)} টি
                     </span>
-                    ${e.loan_count > 1 ? '<div class="text-[10px] text-amber-600 font-semibold">একাধিক লট/পবিস</div>' : ''}
                   </td>
-                  <td class="p-3.5 text-right font-medium">${formatBDT(e.total_disbursed)}</td>
-                  <td class="p-3.5 text-right text-emerald-700 font-medium">${formatBDT(e.total_principal_paid)}</td>
-                  <td class="p-3.5 text-right font-bold text-blue-800">${formatBDT(e.principal_balance)}</td>
-                  <td class="p-3.5 text-right font-bold text-amber-700">${formatBDT(e.interest_balance)}</td>
-                  <td class="p-3.5 text-right font-bold text-emerald-900">${formatBDT(e.net_balance)}</td>
-                  <td class="p-3.5 text-center">
-                    <button onclick="loadOwnPbsLedger(${e.id})" class="text-xs text-emerald-700 hover:text-emerald-900 font-bold bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg border border-emerald-200 transition shadow-sm inline-flex items-center space-x-1 cursor-pointer">
+                  <td class="text-right font-mono font-medium">${formatBDT(e.total_disbursed)}</td>
+                  <td class="text-right font-mono text-emerald-700 font-medium">${formatBDT(e.total_principal_paid)}</td>
+                  <td class="text-right font-mono font-bold text-blue-800">${formatBDT(e.principal_balance)}</td>
+                  <td class="text-right font-mono font-bold text-amber-700">${formatBDT(e.interest_balance)}</td>
+                  <td class="text-right font-mono font-bold text-emerald-900">${formatBDT(e.net_balance)}</td>
+                  <td class="text-center">
+                    <button onclick="loadOwnPbsLedger(${e.id})" class="text-[11px] text-emerald-700 hover:text-emerald-900 font-bold bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded border border-emerald-200 transition shadow-sm inline-flex items-center space-x-1 cursor-pointer">
                       <span>খতিয়ান দেখুন</span>
                       <span>&rarr;</span>
                     </button>
@@ -5015,12 +7101,12 @@ async function loadOwnPbsLedger(targetEmployeeId) {
             </tbody>
             <tfoot>
               <tr class="bg-gray-100 font-bold border-t-2 border-gray-300 text-gray-900">
-                <td colspan="3" class="p-3.5 text-right">সর্বমোট:</td>
-                <td class="p-3.5 text-right">${formatBDT(totalDisb)}</td>
-                <td class="p-3.5 text-right text-emerald-700">${formatBDT(totalPaid)}</td>
-                <td class="p-3.5 text-right text-blue-900">${formatBDT(totalPrinBal)}</td>
-                <td class="p-3.5 text-right text-amber-800">${formatBDT(totalIntBal)}</td>
-                <td class="p-3.5 text-right text-emerald-950 font-extrabold">${formatBDT(totalNetBal)}</td>
+                <td colspan="3" class="text-right p-2">সর্বমোট:</td>
+                <td class="text-right font-mono p-2">${formatBDT(totalDisb)}</td>
+                <td class="text-right font-mono text-emerald-700 p-2">${formatBDT(totalPaid)}</td>
+                <td class="text-right font-mono text-blue-900 p-2">${formatBDT(totalPrinBal)}</td>
+                <td class="text-right font-mono text-amber-800 p-2">${formatBDT(totalIntBal)}</td>
+                <td class="text-right font-mono text-emerald-950 font-extrabold p-2">${formatBDT(totalNetBal)}</td>
                 <td></td>
               </tr>
             </tfoot>
@@ -5583,6 +7669,7 @@ const ownPbsSettingsFields = {
   letterhead_badge_text: 'settingLetterheadBadgeText',
   website: 'settingWebsite',
   bank_name: 'settingBankName',
+  bank_branch: 'settingBankBranch',
   account_no: 'settingAccountNo',
   routing_no: 'settingRoutingNo',
   bank_advice_prepared_by_name: 'settingBankAdvicePreparedByName',
@@ -5591,11 +7678,28 @@ const ownPbsSettingsFields = {
   gm_name: 'settingGmName',
   memo_no_prefix: 'settingMemoNoPrefix'
 };
+const userEditableOwnPbsSettingsFields = new Set([
+  'bank_name',
+  'bank_branch',
+  'account_no',
+  'routing_no',
+  'bank_advice_prepared_by_name',
+  'bank_advice_verified_by_name',
+  'agm_finance_name',
+  'gm_name'
+]);
+function canEditOwnPbsSettings() {
+  return ['admin', 'accounts'].includes(state.user?.role);
+}
+
 let ownPbsSettingsSaveQueue = Promise.resolve();
 let ownPbsSettingsAutosaveTimer = null;
 
 function buildOwnPbsSettingsPayload() {
-  return Object.fromEntries(Object.entries(ownPbsSettingsFields).map(([field, elementId]) => [
+  const editableFields = state.user?.isMasterAdmin
+    ? Object.entries(ownPbsSettingsFields)
+    : Object.entries(ownPbsSettingsFields).filter(([field]) => userEditableOwnPbsSettingsFields.has(field));
+  return Object.fromEntries(editableFields.map(([field, elementId]) => [
     field,
     document.getElementById(elementId)?.value || ''
   ]));
@@ -5613,7 +7717,31 @@ function setOwnPbsSettingsSaveStatus(message, stateName = 'idle') {
   }`;
 }
 
+function setOwnPbsSettingsAccess() {
+  const isMasterAdmin = Boolean(state.user?.isMasterAdmin);
+  const form = document.getElementById('ownPbsSettingsForm');
+  const notice = document.getElementById('ownPbsSettingsReadOnlyNotice');
+  if (!form) return;
+
+  form.querySelectorAll('input, select, textarea, button').forEach(control => {
+    const field = Object.keys(ownPbsSettingsFields).find(key => ownPbsSettingsFields[key] === control.id);
+    const isFileUpload = control.type === 'file' || control.id === 'uploadLetterheadLogoBtn';
+    control.disabled = isMasterAdmin
+      ? false
+      : isFileUpload || (control.type !== 'submit' && (!field || !userEditableOwnPbsSettingsFields.has(field)));
+  });
+  notice?.classList.toggle('hidden', isMasterAdmin);
+  setOwnPbsSettingsSaveStatus(isMasterAdmin
+    ? 'পরিবর্তন করলে স্বয়ংক্রিয়ভাবে সংরক্ষিত হবে'
+    : 'ব্যাংক ও কর্মকর্তা-নাম সম্পাদনা করুন; বাকি তথ্য মাস্টার অ্যাডমিনের জন্য');
+}
+
 function saveOwnPbsSettings(showSuccessToast = false) {
+  if (!canEditOwnPbsSettings()) {
+    setOwnPbsSettingsSaveStatus('এই তথ্য পরিবর্তনের অনুমতি আপনার নেই', 'error');
+    return Promise.resolve(null);
+  }
+
   const saveTask = ownPbsSettingsSaveQueue.catch(() => {}).then(async () => {
     setOwnPbsSettingsSaveStatus('ডাটাবেজে সংরক্ষণ হচ্ছে...', 'saving');
     const payload = buildOwnPbsSettingsPayload();
@@ -5637,6 +7765,7 @@ function saveOwnPbsSettings(showSuccessToast = false) {
 }
 
 function scheduleOwnPbsSettingsAutosave(delay = 700) {
+  if (!canEditOwnPbsSettings()) return;
   clearTimeout(ownPbsSettingsAutosaveTimer);
   setOwnPbsSettingsSaveStatus('পরিবর্তন সংরক্ষণের জন্য অপেক্ষা করছে...', 'saving');
   ownPbsSettingsAutosaveTimer = setTimeout(() => {
@@ -5649,7 +7778,7 @@ async function loadSettingsTab() {
   if (ownPbsSettingsAutosaveTimer) {
     clearTimeout(ownPbsSettingsAutosaveTimer);
     ownPbsSettingsAutosaveTimer = null;
-    await saveOwnPbsSettings();
+    if (canEditOwnPbsSettings()) await saveOwnPbsSettings();
   }
   await ownPbsSettingsSaveQueue;
   await loadSettings();
@@ -5660,6 +7789,7 @@ async function loadSettings() {
     const res = await API.get('/settings');
     if (!res.success) return;
 
+    setOwnPbsSettingsAccess();
     const s = res.pbsSettings;
     if (s) {
       document.getElementById('settingPbsName').value = s.pbs_name || '';
@@ -5678,6 +7808,7 @@ async function loadSettings() {
         logoPreview.classList.remove('hidden');
       }
       document.getElementById('settingBankName').value = s.bank_name || '';
+      document.getElementById('settingBankBranch').value = s.bank_branch || '';
       document.getElementById('settingAccountNo').value = s.account_no || '';
       document.getElementById('settingBankAdvicePreparedByName').value = s.bank_advice_prepared_by_name || '';
       document.getElementById('settingBankAdviceVerifiedByName').value = s.bank_advice_verified_by_name || '';
@@ -5867,10 +7998,197 @@ async function deleteOtherPbsRecord(id) {
   }
 }
 
+// ----------------- SETTINGS SUBTABS & INTEREST RULES -----------------
+let activeSettingsSubtab = 'own';
+
+function switchSettingsSubtab(subtab) {
+  activeSettingsSubtab = subtab;
+  const panes = {
+    own: document.getElementById('settingsPaneOwn'),
+    rates: document.getElementById('settingsPaneRates'),
+    other: document.getElementById('settingsPaneOther')
+  };
+  const btns = {
+    own: document.getElementById('settingsSubtabBtnOwn'),
+    rates: document.getElementById('settingsSubtabBtnRates'),
+    other: document.getElementById('settingsSubtabBtnOther')
+  };
+
+  Object.keys(panes).forEach(k => {
+    if (panes[k]) panes[k].classList.toggle('hidden', k !== subtab);
+    if (btns[k]) {
+      if (k === subtab) {
+        btns[k].className = 'px-4 py-2 text-xs sm:text-sm font-bold rounded-lg bg-emerald-700 text-white shadow-sm flex items-center space-x-1.5 transition';
+      } else {
+        btns[k].className = 'px-4 py-2 text-xs sm:text-sm font-bold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 flex items-center space-x-1.5 transition';
+      }
+    }
+  });
+
+  if (subtab === 'rates') {
+    loadInterestRules();
+  }
+}
+
+async function loadInterestRules() {
+  const tbody = document.getElementById('interestRulesTableBody');
+  if (!tbody) return;
+
+  try {
+    const res = await API.get('/settings/interest-rules');
+    state.interestRules = res.rules || [];
+    renderInterestRulesTable(state.interestRules);
+  } catch (err) {
+    console.error('Failed to load interest rules:', err);
+    tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-red-500">সুদের হার বিধি লোড করা যায়নি।</td></tr>`;
+  }
+}
+
+function renderInterestRulesTable(rules = []) {
+  const tbody = document.getElementById('interestRulesTableBody');
+  if (!tbody) return;
+
+  if (rules.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" class="p-6 text-center text-gray-500 italic">কোনো সুদের হার বিধি পাওয়া যায়নি।</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rules.map((r, i) => {
+    const isOngoing = !r.effective_to_date;
+    const toDateText = isOngoing
+      ? '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">চলমান (Ongoing)</span>'
+      : `<span class="font-mono text-gray-800">${r.effective_to_date}</span>`;
+
+    const statusBadge = r.is_active
+      ? '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-800">সক্রিয়</span>'
+      : '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-600">নিষ্ক্রিয়</span>';
+
+    return `
+      <tr class="hover:bg-emerald-50/40 transition">
+        <td class="p-2.5 text-center text-gray-500">${i + 1}</td>
+        <td class="p-2.5">
+          <strong class="text-gray-900 block font-semibold text-xs">${r.rule_name}</strong>
+          ${r.description ? `<span class="text-[11px] text-gray-500 block mt-0.5">${r.description}</span>` : ''}
+        </td>
+        <td class="p-2.5 text-center font-mono font-medium text-gray-800">${r.effective_from_date}</td>
+        <td class="p-2.5 text-center">${toDateText}</td>
+        <td class="p-2.5 text-center font-mono font-black text-sm text-emerald-800">${parseFloat(r.rate).toFixed(1)}%</td>
+        <td class="p-2.5 text-center">${statusBadge}</td>
+        <td class="p-2.5 text-center">
+          <div class="flex items-center justify-center space-x-1.5">
+            <button type="button" onclick="openInterestRuleModal(${r.id})" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="সম্পাদনা">
+              <i data-lucide="edit-2" class="w-4 h-4"></i>
+            </button>
+            <button type="button" onclick="deleteInterestRuleRecord(${r.id})" class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="মুছে ফেলুন">
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function openInterestRuleModal(ruleId = null) {
+  const form = document.getElementById('interestRuleForm');
+  if (form) form.reset();
+
+  const titleEl = document.getElementById('interestRuleModalTitle');
+  const btnEl = document.getElementById('saveInterestRuleBtn');
+
+  if (ruleId) {
+    const rule = (state.interestRules || []).find(r => r.id === ruleId);
+    if (!rule) return;
+
+    document.getElementById('editInterestRuleId').value = rule.id;
+    document.getElementById('editRuleName').value = rule.rule_name || '';
+    document.getElementById('editRuleFromDate').value = rule.effective_from_date || '';
+    document.getElementById('editRuleToDate').value = rule.effective_to_date || '';
+    document.getElementById('editRuleRate').value = rule.rate || '';
+    document.getElementById('editRuleDescription').value = rule.description || '';
+
+    if (titleEl) titleEl.innerHTML = `<i data-lucide="percent" class="w-5 h-5 text-emerald-700"></i><span>সুদের হার বিধি সম্পাদন</span>`;
+    if (btnEl) btnEl.innerHTML = `<i data-lucide="save" class="w-4 h-4"></i><span>আপডেট সংরক্ষণ করুন</span>`;
+  } else {
+    document.getElementById('editInterestRuleId').value = '';
+    if (titleEl) titleEl.innerHTML = `<i data-lucide="plus-circle" class="w-5 h-5 text-emerald-700"></i><span>নতুন সুদের হার বিধি যোগ করুন</span>`;
+    if (btnEl) btnEl.innerHTML = `<i data-lucide="save" class="w-4 h-4"></i><span>বিধি সংরক্ষণ করুন</span>`;
+  }
+
+  openModal('interestRuleModal');
+  if (window.lucide) lucide.createIcons();
+}
+
+async function handleInterestRuleSubmit(e) {
+  e.preventDefault();
+  const id = document.getElementById('editInterestRuleId').value;
+  const payload = {
+    rule_name: document.getElementById('editRuleName').value.trim(),
+    effective_from_date: document.getElementById('editRuleFromDate').value.trim(),
+    effective_to_date: document.getElementById('editRuleToDate').value.trim() || null,
+    rate: parseFloat(document.getElementById('editRuleRate').value),
+    description: document.getElementById('editRuleDescription').value.trim()
+  };
+
+  const btn = document.getElementById('saveInterestRuleBtn');
+  btn.disabled = true;
+
+  try {
+    let res;
+    if (id) {
+      res = await API.put(`/settings/interest-rules/${id}`, payload);
+    } else {
+      res = await API.post('/settings/interest-rules', payload);
+    }
+
+    if (res.success) {
+      showToast(res.message, 'success');
+      closeModal('interestRuleModal');
+      await loadInterestRules();
+    } else {
+      showToast(res.message || 'সংরক্ষণ ব্যর্থ হয়েছে।', 'error');
+    }
+  } catch (err) {
+    showToast(err.message || 'সার্ভার সংযোগ ত্রুটি', 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteInterestRuleRecord(id) {
+  const rule = (state.interestRules || []).find(r => r.id === id);
+  const name = rule ? rule.rule_name : 'এই বিধিটি';
+
+  if (!await confirmWithSweetAlert(`আপনি কি নিশ্চিত যে "${name}" সুদের হার বিধিটি মুছে ফেলতে চান?`)) {
+    return;
+  }
+
+  try {
+    const res = await API.delete(`/settings/interest-rules/${id}`);
+    if (res.success) {
+      showToast(res.message, 'success');
+      await loadInterestRules();
+    } else {
+      showToast(res.message || 'মুছে ফেলা যায়নি।', 'error');
+    }
+  } catch (err) {
+    showToast(err.message || 'সার্ভার সংযোগ ত্রুটি', 'error');
+  }
+}
+
+window.switchSettingsSubtab = switchSettingsSubtab;
+window.loadInterestRules = loadInterestRules;
+window.openInterestRuleModal = openInterestRuleModal;
+window.handleInterestRuleSubmit = handleInterestRuleSubmit;
+window.deleteInterestRuleRecord = deleteInterestRuleRecord;
+
 window.openOtherPbsModal = openOtherPbsModal;
 window.filterOtherPbsTable = filterOtherPbsTable;
 window.handleOtherPbsSubmit = handleOtherPbsSubmit;
 window.deleteOtherPbsRecord = deleteOtherPbsRecord;
+
 
 
 // 13. EMPLOYEE SELF-SERVICE PORTAL (Personal Loan Ledger)
@@ -6265,9 +8583,14 @@ function printEmployeePortalLedger() {
       <title>ব্যক্তিগত গৃহ ঋণ হিসাব খতিয়ান - ${escapeHtml(emp.name)}</title>
       <style>
         @page { size: A4 landscape; margin: 10mm; }
+        * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         body { font-family: 'SolaimanLipi', 'Kalpurush', 'Nikosh', 'Arial', sans-serif; color: #111; margin: 0; padding: 10px; }
         .text-center { text-align: center; }
         .header { border-bottom: 2px double #333; padding-bottom: 8px; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; page-break-inside: auto; }
+        thead { display: table-header-group; }
+        tfoot { display: table-row-group !important; }
+        tr { page-break-inside: avoid; page-break-after: auto; }
       </style>
     </head>
     <body>
@@ -6294,8 +8617,8 @@ function printEmployeePortalLedger() {
         <div style="text-align: center; width: 180px; border-top: 1px dashed #333; padding-top: 5px;">
           ঋণগ্রহীতার স্বাক্ষর
         </div>
-        <div style="text-align: center; width: 180px; border-top: 1px dashed #333; padding-top: 5px;">
-          সহকারী হিসাবরক্ষক / হিসাবরক্ষক
+        <div style="text-align: center; width: 220px; border-top: 1px dashed #333; padding-top: 5px;">
+          জুনিয়র অফিসার (হিসাব) / অফিসার (হিসাব)
         </div>
         <div style="text-align: center; width: 200px; border-top: 1px dashed #333; padding-top: 5px;">
           সহকারী জেনারেল ম্যানেজার (অর্থ-হিসাব)
@@ -6365,6 +8688,55 @@ function exportEmployeePortalLedgerExcel() {
   showToast('খতিয়ান এক্সেল ফাইল সফলভাবে ডাউনলোড হয়েছে।', 'success');
 }
 
+async function exportFullDatabaseExcel() {
+  const token = API.getToken();
+  if (!token) {
+    showToast('লগইন মেয়াদ উত্তীর্ণ হয়েছে। দয়া করে পুনরায় লগইন করুন।', 'error');
+    return;
+  }
+
+  try {
+    Swal.fire({
+      title: 'এক্সেল প্রস্তুত হচ্ছে...',
+      html: 'ডাটাবেজের সকল টেবিলের তথ্য দিয়ে এক্সেল ফাইল প্রস্তুত করা হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...',
+      allowOutsideClick: false,
+      didOpen: () => Swal.showLoading()
+    });
+
+    const response = await fetch('/api/reports/export/excel?reportType=full_database', {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error('সার্ভার থেকে এক্সেল ফাইল আনতে ব্যর্থ হয়েছে। স্ট্যাটাস: ' + response.status);
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    a.download = `PBS_House_Loan_Full_Database_${dateStr}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+
+    Swal.close();
+    showToast('সম্পূর্ণ ডাটাবেজ এক্সেল ব্যাকআপ সফলভাবে ডাউনলোড হয়েছে!', 'success');
+  } catch (err) {
+    console.error('Full database export error:', err);
+    Swal.fire({
+      icon: 'error',
+      title: 'এক্সপোর্ট ব্যর্থ হয়েছে!',
+      text: err.message || 'এক্সেল ফাইল ডাউনলোড করা সম্ভব হয়নি।'
+    });
+  }
+}
+
 // ----------------- FORM HANDLERS -----------------
 
 function setupFormListeners() {
@@ -6394,6 +8766,8 @@ function setupFormListeners() {
     const sourceType = document.getElementById('loanSourceTypeSelect')?.value || 'OWN_PBS';
     const isOtherPbs = (sourceType === 'OTHER_PBS');
 
+    const hasOpening = document.getElementById('loanHasOpeningBalanceCb')?.checked || false;
+
     const payload = {
       employee_id: document.getElementById('loanEmployeeSelect').value,
       loan_no: document.getElementById('loanNoInput').value,
@@ -6407,7 +8781,11 @@ function setupFormListeners() {
       disbursed_amount: document.getElementById('loanDisbursedAmount').value,
       monthly_installment: document.getElementById('loanMonthlyInstallment').value,
       custom_interest_rate: document.getElementById('loanInterestRate').value,
-      remarks: document.getElementById('loanRemarks').value
+      remarks: document.getElementById('loanRemarks').value,
+      has_opening_balance: hasOpening,
+      opening_principal_balance: hasOpening ? document.getElementById('loanOpeningPrincipal')?.value : null,
+      opening_interest_balance: hasOpening ? document.getElementById('loanOpeningInterest')?.value : null,
+      opening_balance_as_of: hasOpening ? document.getElementById('loanOpeningDate')?.value : null
     };
 
     try {
@@ -6474,24 +8852,38 @@ function setupFormListeners() {
   // Single Deduction Form
   document.getElementById('singleDeductionForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const rawMethod = document.getElementById('singleRepaymentMethodSelect')?.value || 'SALARY_DEDUCTION';
+    const isInterPbs = (rawMethod === 'INTER_PBS_REMITTANCE');
+    const sourcePbs = document.getElementById('singleSourcePbsSelect')?.value || '';
+    const remarks = isInterPbs && sourcePbs ? `${sourcePbs} হতে রেমিট্যান্স প্রাপ্তি` : '';
+
     const payload = {
       loan_id: document.getElementById('deductionLoanSelect').value,
       deduction_month: document.getElementById('deductionMonthInput').value,
       deduction_date: document.getElementById('deductionDateInput').value,
       amount: document.getElementById('deductionAmountInput').value,
+      repayment_method: isInterPbs ? 'INTER_PBS_COLLECTION' : rawMethod,
+      allow_suspended_repayment: Boolean(document.getElementById('allowSuspendedRepaymentCheckbox')?.checked),
       voucher_no: document.getElementById('deductionVoucherInput').value,
       principal_posting: document.getElementById('singlePrincipalPostingInput')?.value || '',
-      interest_posting: document.getElementById('singleInterestPostingInput')?.value || ''
+      interest_posting: document.getElementById('singleInterestPostingInput')?.value || '',
+      remarks: remarks
     };
 
     try {
       const res = await API.post('/repayments', payload);
       if (res.success) {
         closeModal('singleDeductionModal');
-        showToast(res.message, 'success');
+        showToast(res.message || 'কিস্তি/সমন্বয় সফলভাবে সংরক্ষিত হয়েছে।', 'success');
         document.getElementById('singleDeductionForm').reset();
+        const notice = document.getElementById('singleDeductionSuspendedNotice');
+        if (notice) notice.classList.add('hidden');
+        onRepaymentMethodChange();
         loadRepayments();
         loadLoans();
+        if (typeof loadDashboard === 'function') loadDashboard();
+        if (typeof loadTransferredLoans === 'function') loadTransferredLoans();
+        if (typeof loadCurrentMonthDeductionSnapshot === 'function') loadCurrentMonthDeductionSnapshot();
       }
     } catch (err) {
       showToast(err.message, 'error');
@@ -6530,6 +8922,7 @@ function setupFormListeners() {
         loadDashboard();
         loadRepayments();
         loadLoans();
+        if (typeof loadCurrentMonthDeductionSnapshot === 'function') loadCurrentMonthDeductionSnapshot();
       } else {
         showToast(res.message || 'ব্যাচ কর্তন সম্পন্ন হয়নি।', 'error');
       }
@@ -6868,63 +9261,62 @@ function renderTransferredLoansTable(records) {
     const safePbsName = (r.currentPostingPbs || '').replace(/'/g, "\\'");
 
     return `
-      <tr class="hover:bg-amber-50/30 transition">
-        <td class="p-3 text-center font-mono text-gray-500">${toBn(idx + 1)}</td>
-        <td class="p-3">
-          <div class="font-bold text-gray-900 text-xs">${r.empName}</div>
-          <div class="font-mono text-[11px] text-emerald-800 font-semibold">পে আইডি: ${r.empCode}</div>
+      <tr>
+        <td class="text-center font-mono text-gray-500">${toBn(idx + 1)}</td>
+        <td>
+          <div class="font-bold text-gray-900 leading-tight">${r.empName}</div>
+          <div class="font-mono text-[11px] text-emerald-800 font-semibold leading-none mt-0.5">পে আইডি: ${r.empCode}</div>
         </td>
-        <td class="p-3">
-          <div class="text-gray-700 text-xs">${r.designation}</div>
-          <div class="text-gray-400 text-[11px] font-mono">${r.mobile || '-'}</div>
+        <td>
+          <div class="text-gray-700 text-xs leading-tight">${r.designation}</div>
+          <div class="text-gray-400 text-[10px] font-mono leading-none mt-0.5">${r.mobile || '-'}</div>
         </td>
-        <td class="p-3">
-          <div class="flex items-center space-x-1.5">
-            <span class="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-900 border border-amber-200">${r.currentPostingPbs}</span>
-            <button onclick="openChangePostingPbsModal(${r.employeeId}, '${safeEmpName}', '${safePbsName}')" class="p-1 hover:bg-gray-200 rounded text-gray-500 transition cursor-pointer" title="পদায়ন পবিস পরিবর্তন করুন">
-              <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+        <td>
+          <div class="flex items-center space-x-1">
+            <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200">${r.currentPostingPbs}</span>
+            <button onclick="openChangePostingPbsModal(${r.employeeId}, '${safeEmpName}', '${safePbsName}')" class="p-0.5 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-700 transition cursor-pointer" title="পদায়ন পবিস পরিবর্তন করুন">
+              <i data-lucide="edit-3" class="w-3 h-3"></i>
             </button>
           </div>
         </td>
-        <td class="p-3">
-          <div class="font-mono font-bold text-xs text-blue-900">${r.loanNo}</div>
-          <div class="text-[10px] text-gray-500">মঞ্জুরি: ${formatBDT(r.disbursedAmount)}</div>
+        <td>
+          <div class="font-mono font-bold text-xs text-blue-900 leading-tight">${r.loanNo}</div>
+          <div class="text-[10px] text-gray-500 font-mono leading-none mt-0.5">মঞ্জুরি: ${formatBDT(r.disbursedAmount)}</div>
         </td>
-        <td class="p-3 text-right font-mono font-semibold text-gray-800">
+        <td class="text-right font-mono font-semibold text-gray-800">
           ${formatBDT(r.monthlyInstallment)}
         </td>
-        <td class="p-3 text-center font-mono text-xs text-gray-600">
+        <td class="text-center font-mono text-[11px] text-gray-600">
           ${r.lastPaidMonthFormatted}
         </td>
-        <td class="p-3 text-center">
-          <span class="px-2.5 py-1 rounded-full text-xs font-mono ${dueBadgeClass}">
+        <td class="text-center">
+          <span class="px-2 py-0.5 rounded-full text-[11px] font-mono ${dueBadgeClass}">
             ${toBn(r.dueMonthsCount)} মাস
           </span>
         </td>
-        <td class="p-3 text-center font-mono text-[11px] text-gray-700">
+        <td class="text-center font-mono text-[11px] text-gray-700">
           ${r.duePeriodText}
         </td>
-        <td class="p-3 text-right font-mono font-bold text-rose-700 text-sm">
+        <td class="text-right font-mono font-bold text-rose-700">
           ${formatBDT(r.overdueAmount)}
         </td>
-        <td class="p-3 text-right">
-          <div class="font-mono font-bold text-xs text-emerald-950">${formatBDT(r.totalBalance)}</div>
-          <div class="text-[10px] text-gray-400 font-mono">আ:${formatBDT(r.principalBalance)} | সু:${formatBDT(r.interestBalance)}</div>
-          ${r.advanceBalance > 0 ? `<div class="text-[10px] text-blue-700 font-semibold">অগ্রিম জমা: ${formatBDT(r.advanceBalance)}</div>` : ''}
+        <td class="text-right">
+          <div class="font-mono font-bold text-xs text-emerald-950 leading-tight">${formatBDT(r.totalBalance)}</div>
+          <div class="text-[10px] text-gray-400 font-mono leading-none mt-0.5">আ:${formatBDT(r.principalBalance)} | সু:${formatBDT(r.interestBalance)}</div>
+          ${r.advanceBalance > 0 ? `<div class="text-[10px] text-blue-700 font-semibold font-mono mt-0.5 leading-none">অগ্রিম: ${formatBDT(r.advanceBalance)}</div>` : ''}
         </td>
-        <td class="p-3 text-center">
-          <div class="flex items-center justify-center space-x-1.5">
-            <button onclick="openDemandLetterModal(${r.loanId})" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold shadow-sm transition flex items-center space-x-1 cursor-pointer" title="তাগাদা পত্র প্রস্তুত ও প্রিন্ট">
-              <i data-lucide="file-text" class="w-3 h-3"></i>
-              <span>তাগাদা পত্র</span>
+        <td class="text-center">
+          <div class="flex items-center justify-center space-x-1">
+            <button onclick="openPbsDemandLetterModal('${safePbsName}')" class="px-2 py-0.5 bg-amber-600 hover:bg-amber-700 text-white rounded text-[10px] font-bold shadow-2xs transition flex items-center space-x-1 cursor-pointer whitespace-nowrap" title="${r.currentPostingPbs}-এর তাগাদা পত্র প্রস্তুত ও প্রিন্ট">
+              <i data-lucide="file-text" class="w-2.5 h-2.5"></i>
+              <span>তাগাদা</span>
             </button>
-            <button onclick="openInterPbsCollectionModal(${r.loanId})" class="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-[11px] font-bold shadow-sm transition flex items-center space-x-1 cursor-pointer" title="অন্য পবিস থেকে প্রাপ্ত কিস্তির টাকা পোস্টিং">
-              <i data-lucide="check" class="w-3 h-3"></i>
+            <button onclick="openInterPbsCollectionModal(${r.loanId})" class="px-2 py-0.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded text-[10px] font-bold shadow-2xs transition flex items-center space-x-1 cursor-pointer whitespace-nowrap" title="অন্য পবিস থেকে প্রাপ্ত কিস্তির টাকা পোস্টিং">
+              <i data-lucide="check" class="w-2.5 h-2.5"></i>
               <span>পোস্টিং</span>
             </button>
-            <button onclick="toggleTransferredLoanSalaryDeduction(${r.loanId}, ${!r.salaryDeductionSuspended})" class="px-2.5 py-1 ${r.salaryDeductionSuspended ? 'bg-blue-700 hover:bg-blue-800' : 'bg-rose-700 hover:bg-rose-800'} text-white rounded-lg text-[11px] font-bold shadow-sm transition flex items-center space-x-1 cursor-pointer" title="${r.salaryDeductionSuspended ? 'বেতন কর্তন পুনরায় চালু করুন' : 'বেতন কর্তন স্থগিত করুন'}">
-              <i data-lucide="${r.salaryDeductionSuspended ? 'play' : 'pause'}" class="w-3 h-3"></i>
-              <span>${r.salaryDeductionSuspended ? 'কর্তন চালু' : 'কর্তন স্থগিত'}</span>
+            <button onclick="toggleTransferredLoanSalaryDeduction(${r.loanId}, ${!r.salaryDeductionSuspended})" class="px-1.5 py-0.5 ${r.salaryDeductionSuspended ? 'bg-blue-700 hover:bg-blue-800' : 'bg-rose-700 hover:bg-rose-800'} text-white rounded text-[10px] font-bold shadow-2xs transition flex items-center space-x-1 cursor-pointer whitespace-nowrap" title="${r.salaryDeductionSuspended ? 'বেতন কর্তন পুনরায় চালু করুন' : 'বেতন কর্তন স্থগিত করুন'}">
+              <span>${r.salaryDeductionSuspended ? 'চালু' : 'স্থগিত'}</span>
             </button>
           </div>
         </td>
@@ -6937,36 +9329,9 @@ function renderTransferredLoansTable(records) {
 
 function renderTransferredPbsSummary(pbsSummary) {
   const container = document.getElementById('transferredPbsSummaryContainer');
-  if (!container) return;
-
-  if (!pbsSummary || pbsSummary.length === 0) {
-    container.innerHTML = `<div class="p-4 text-center text-gray-400 text-xs col-span-full">কোনো পবিসের তথ্য নেই।</div>`;
-    return;
+  if (container) {
+    container.innerHTML = '';
   }
-
-  container.innerHTML = pbsSummary.map(p => {
-    const safePbsName = (p.pbsName || '').replace(/'/g, "\\'");
-    return `
-      <div onclick="filterBySpecificPbs('${safePbsName}')" class="bg-gradient-to-br from-purple-50/60 to-white p-3.5 rounded-xl border border-purple-200/80 hover:border-purple-400 hover:shadow-md cursor-pointer transition space-y-1.5">
-        <div class="flex items-center justify-between">
-          <span class="font-bold text-xs text-purple-950 truncate max-w-[170px]" title="${p.pbsName}">${p.pbsName}</span>
-          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800">${toBn(p.borrowerCount)} জন</span>
-        </div>
-        <div class="text-[11px] text-gray-600 flex justify-between">
-          <span>বকেয়া কিস্তি:</span>
-          <strong class="text-red-700 font-mono">${toBn(p.totalDueMonths)} মাস</strong>
-        </div>
-        <div class="text-[11px] text-gray-600 flex justify-between">
-          <span>বকেয়া টাকা:</span>
-          <strong class="text-rose-700 font-mono font-bold">${formatBDT(p.totalOverdueAmount)}</strong>
-        </div>
-        <div class="text-[11px] text-gray-600 flex justify-between pt-1 border-t border-purple-100">
-          <span>মোট অবশিষ্ট ঋণ:</span>
-          <strong class="text-emerald-900 font-mono font-semibold">${formatBDT(p.totalBalance)}</strong>
-        </div>
-      </div>
-    `;
-  }).join('');
 }
 
 function filterBySpecificPbs(pbsName) {
@@ -7021,78 +9386,288 @@ function resetTransferredLoansFilter() {
   loadTransferredLoans();
 }
 
-function openInterPbsCollectionModal(loanId) {
-  if (!transferredLoansData || !transferredLoansData.records) {
-    showToast('লোন তথ্য প্রস্তুত নেই।', 'error');
+function getNextMonth(yyyyMm) {
+  if (!yyyyMm || !/^\d{4}-(0[1-9]|1[0-2])$/.test(yyyyMm)) {
+    return new Date().toISOString().slice(0, 7);
+  }
+  const [yStr, mStr] = yyyyMm.split('-');
+  let y = parseInt(yStr, 10);
+  let m = parseInt(mStr, 10);
+  m++;
+  if (m > 12) {
+    m = 1;
+    y++;
+  }
+  return `${y}-${String(m).padStart(2, '0')}`;
+}
+
+function openLoanInstallmentPostingModal(loanId) {
+  openInterPbsCollectionModal(loanId);
+}
+
+async function openInterPbsCollectionModal(loanId) {
+  // 1. If loanId is provided, open directly for this loan
+  if (loanId) {
+    let record = (transferredLoansData?.records || []).find(r => r.loanId == loanId)
+      || (state.loans || []).find(l => l.id == loanId);
+
+    if (!record) {
+      try {
+        const res = await API.get(`/loans/${loanId}`);
+        if (res?.success && res.loan) {
+          record = res.loan;
+        }
+      } catch (err) {
+        console.error('Fetch loan for modal error:', err);
+      }
+    }
+
+    if (!record) {
+      showToast('ঋণ হিসাবটি পাওয়া যায়নি।', 'error');
+      return;
+    }
+
+    populateIpcModalForLoan(record, false);
+    openModal('interPbsCollectionModal');
     return;
   }
 
-  const record = transferredLoansData.records.find(r => r.loanId === loanId);
-  if (!record) {
-    showToast('ঋণ রেকর্ডটি পাওয়া যায়নি।', 'error');
+  // 2. If no loanId provided (e.g. clicked "+ একক কিস্তি/জমা এন্ট্রি"), show borrower selector dropdown
+  if (!state.loans || state.loans.length === 0) {
+    try {
+      await loadLoans();
+    } catch (e) {
+      console.warn('loadLoans error:', e);
+    }
+  }
+
+  const activeLoans = (state.loans || []).filter(l => l.status === 'ACTIVE' && !l.is_deleted);
+  if (activeLoans.length === 0) {
+    showToast('বর্তমানে কোনো সক্রিয় ঋণ হিসাব নেই।', 'warning');
     return;
   }
 
-  // Populate strip
-  document.getElementById('ipcLoanId').value = record.loanId;
-  document.getElementById('ipcEmpName').textContent = record.empName;
-  document.getElementById('ipcPostingPbs').textContent = record.currentPostingPbs;
-  document.getElementById('ipcEmpCode').textContent = record.empCode;
-  document.getElementById('ipcDesignation').textContent = record.designation;
-  document.getElementById('ipcLoanNo').textContent = record.loanNo;
-  document.getElementById('ipcMonthlyInstallment').textContent = formatBDT(record.monthlyInstallment) + ' টাকা';
-  document.getElementById('ipcPrincipalBal').textContent = formatBDT(record.principalBalance);
-  document.getElementById('ipcInterestBal').textContent = formatBDT(record.interestBalance);
-  document.getElementById('ipcTotalBal').textContent = formatBDT(record.totalBalance);
-  document.getElementById('ipcAdvanceBal').textContent = formatBDT(record.advanceBalance || 0);
+  const select = document.getElementById('ipcLoanSelect');
+  if (select) {
+    select.innerHTML = '<option value="">-- ঋণ হিসাব নম্বর ও কর্মচারী নির্বাচন করুন --</option>' +
+      activeLoans.map(l => {
+        const pbs = l.current_posting_pbs || l.origin_pbs_name || 'নিজস্ব পবিস';
+        return `<option value="${l.id}">${l.loan_no} - ${l.emp_name} (${pbs}) [কিস্তি: ${formatBDT(l.monthly_installment)}]</option>`;
+      }).join('');
+    select.value = activeLoans[0].id;
+  }
 
-  // Defaults
-  document.getElementById('ipcReceiptDate').value = new Date().toISOString().slice(0, 10);
-  document.getElementById('ipcVoucherNo').value = '';
-  document.getElementById('ipcRemarks').value = '';
-  document.getElementById('ipcRemarks').dataset.userEdited = 'false';
-  document.getElementById('ipcManualPostingToggle').checked = false;
-  document.getElementById('ipcManualMonthPicker').value = new Date().toISOString().slice(0, 7);
-  document.getElementById('ipcManualMonthsList').replaceChildren();
-  document.getElementById('ipcManualAmount').value = record.monthlyInstallment;
-  addIpcManualMonth();
+  populateIpcModalForLoan(activeLoans[0], true);
+  openModal('interPbsCollectionModal');
+}
+
+function onIpcLoanSelectChange(selectedId) {
+  if (!selectedId) return;
+  const record = (state.loans || []).find(l => l.id == selectedId)
+    || (transferredLoansData?.records || []).find(r => r.loanId == selectedId);
+  if (record) {
+    populateIpcModalForLoan(record, true);
+  }
+}
+
+function onIpcRepaymentMethodChange() {
+  const method = document.getElementById('ipcRepaymentMethod')?.value || 'SALARY_DEDUCTION';
+  const voucherLabel = document.getElementById('ipcVoucherLabel');
+  const voucherInput = document.getElementById('ipcVoucherNo');
+  const dateLabel = document.getElementById('ipcReceiptDateLabel');
+
+  if (method === 'SALARY_DEDUCTION') {
+    if (voucherLabel) voucherLabel.textContent = 'বেতন ভাউচার / বিল নম্বর (ঐচ্ছিক)';
+    if (voucherInput) voucherInput.placeholder = `যেমন: SAL-${new Date().toISOString().slice(0, 7).replace('-', '')}`;
+    if (dateLabel) dateLabel.textContent = 'বেতন কর্তনের তারিখ (Deduction Date) *';
+  } else if (method === 'BANK_DEPOSIT') {
+    if (voucherLabel) voucherLabel.textContent = 'ব্যাংক জমা ভাউচার / পে-অর্ডার / চালান নং *';
+    if (voucherInput) voucherInput.placeholder = 'যেমন: BD-98124 বা CH-05';
+    if (dateLabel) dateLabel.textContent = 'ব্যাংক জমার তারিখ (Deposit Date) *';
+  } else if (method === 'CASH') {
+    if (voucherLabel) voucherLabel.textContent = 'নগদ রসিদ / এমআর নম্বর *';
+    if (voucherInput) voucherInput.placeholder = 'যেমন: MR-402 বা CR-101';
+    if (dateLabel) dateLabel.textContent = 'নগদ জমার তারিখ (Receipt Date) *';
+  } else if (method === 'LUMPSUM_SETTLEMENT') {
+    if (voucherLabel) voucherLabel.textContent = 'এককালীন সমন্বয় ভাউচার নং *';
+    if (voucherInput) voucherInput.placeholder = 'যেমন: SETTLE-01';
+    if (dateLabel) dateLabel.textContent = 'সমন্বয়ের তারিখ (Settlement Date) *';
+  } else {
+    if (voucherLabel) voucherLabel.textContent = 'ব্যাংক ভাউচার / রেমিট্যান্স অ্যাডভাইস নং';
+    if (voucherInput) voucherInput.placeholder = 'যেমন: BEFTN-10294 বা VR-05';
+    if (dateLabel) dateLabel.textContent = 'টাকা প্রাপ্তির তারিখ (Receipt Date) *';
+  }
+}
+
+function populateIpcModalForLoan(record, showSelector = false) {
+  if (!record) return;
+
+  const loanId = record.loanId || record.id;
+  const empName = record.empName || record.emp_name || '-';
+  const empCode = record.empCode || record.emp_code || '-';
+  const designation = record.designation || '-';
+  const loanNo = record.loanNo || record.loan_no || '-';
+  const installment = Number(record.monthlyInstallment || record.monthly_installment || 0);
+  const principalBal = Number(record.principalBalance !== undefined ? record.principalBalance : (record.principal_balance || 0));
+  const interestBal = Number(record.interestBalance !== undefined ? record.interestBalance : (record.interest_balance || 0));
+  const totalBal = Number(record.totalBalance !== undefined ? record.totalBalance : (principalBal + interestBal));
+  const advanceBal = Number(record.advanceBalance !== undefined ? record.advanceBalance : (record.advance_balance || 0));
+
+  const postingPbs = record.currentPostingPbs || record.current_posting_pbs || (record.loan_source_type === 'OTHER_PBS' ? record.origin_pbs_name : 'নিজস্ব পবিস') || 'নিজস্ব পবিস';
+  const isOtherPbs = (record.currentPostingPbs && record.currentPostingPbs !== 'নিজস্ব পবিস')
+    || (record.current_posting_pbs && record.current_posting_pbs !== 'নিজস্ব পবিস')
+    || (record.loan_source_type === 'OTHER_PBS');
+
+  // Set Hidden ID
+  const loanIdInput = document.getElementById('ipcLoanId');
+  if (loanIdInput) loanIdInput.value = loanId;
+
+  // Selector Container
+  const selContainer = document.getElementById('ipcLoanSelectorContainer');
+  if (selContainer) {
+    selContainer.classList.toggle('hidden', !showSelector);
+    if (showSelector) {
+      const sel = document.getElementById('ipcLoanSelect');
+      if (sel) sel.value = loanId;
+    }
+  }
+
+  // Populate Borrower Strip
+  const elEmpName = document.getElementById('ipcEmpName');
+  const elPostingPbs = document.getElementById('ipcPostingPbs');
+  const elEmpCode = document.getElementById('ipcEmpCode');
+  const elDesignation = document.getElementById('ipcDesignation');
+  const elLoanNo = document.getElementById('ipcLoanNo');
+  const elInstallment = document.getElementById('ipcMonthlyInstallment');
+  const elPrinBal = document.getElementById('ipcPrincipalBal');
+  const elIntBal = document.getElementById('ipcInterestBal');
+  const elTotBal = document.getElementById('ipcTotalBal');
+  const elAdvBal = document.getElementById('ipcAdvanceBal');
+
+  if (elEmpName) elEmpName.textContent = empName;
+  if (elPostingPbs) {
+    elPostingPbs.textContent = postingPbs;
+    if (isOtherPbs) {
+      elPostingPbs.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200';
+    } else {
+      elPostingPbs.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200';
+    }
+  }
+  if (elEmpCode) elEmpCode.textContent = empCode;
+  if (elDesignation) elDesignation.textContent = designation;
+  if (elLoanNo) elLoanNo.textContent = loanNo;
+  if (elInstallment) elInstallment.textContent = `${formatBDT(installment)} টাকা`;
+  if (elPrinBal) elPrinBal.textContent = formatBDT(principalBal);
+  if (elIntBal) elIntBal.textContent = formatBDT(interestBal);
+  if (elTotBal) elTotBal.textContent = formatBDT(totalBal);
+  if (elAdvBal) elAdvBal.textContent = formatBDT(advanceBal);
+
+  // Modal Title & Repayment Method Setup
+  const modalTitle = document.getElementById('ipcModalTitle');
+  const methodContainer = document.getElementById('ipcRepaymentMethodContainer');
+  const methodSelect = document.getElementById('ipcRepaymentMethod');
+  const submitBtnText = document.getElementById('ipcSubmitBtnText');
+
+  if (isOtherPbs) {
+    if (modalTitle) modalTitle.textContent = 'অন্য পবিস হতে প্রাপ্ত রেমিট্যান্স / কিস্তির টাকা পোস্টিং';
+    if (submitBtnText) submitBtnText.textContent = 'কিস্তি পোস্টিং সম্পন্ন করুন';
+    if (methodContainer) methodContainer.classList.add('hidden');
+    if (methodSelect) methodSelect.value = 'INTER_PBS_COLLECTION';
+    onIpcRepaymentMethodChange();
+  } else {
+    if (modalTitle) modalTitle.textContent = 'ঋণ কিস্তি কর্তন ও জমা পোস্টিং';
+    if (submitBtnText) submitBtnText.textContent = 'কিস্তি / জমা পোস্টিং সম্পন্ন করুন';
+    if (methodContainer) methodContainer.classList.remove('hidden');
+    if (methodSelect && methodSelect.value === 'INTER_PBS_COLLECTION') {
+      methodSelect.value = 'SALARY_DEDUCTION';
+    }
+    onIpcRepaymentMethodChange();
+  }
+
+  // Receipt Date: Default today
+  const receiptDateInput = document.getElementById('ipcReceiptDate');
+  if (receiptDateInput) receiptDateInput.value = new Date().toISOString().slice(0, 10);
+
+  // Voucher No: Clear
+  const voucherInput = document.getElementById('ipcVoucherNo');
+  if (voucherInput) voucherInput.value = '';
+
+  // Manual Posting Toggle: Default Checked (as in screenshot)
+  const manualToggle = document.getElementById('ipcManualPostingToggle');
+  if (manualToggle) manualToggle.checked = true;
   toggleIpcManualPosting();
 
-  // Populate months checklist
-  currentIpcMonths = record.dueMonthsList || [];
-  const checklistContainer = document.getElementById('ipcMonthsChecklist');
+  // Determine starting month for posting
+  const lastDeduction = record.lastDeductionMonth || record.last_deduction_month;
+  let startMonth = lastDeduction
+    ? getNextMonth(lastDeduction)
+    : (record.first_deduction_month || new Date().toISOString().slice(0, 7));
 
-  if (currentIpcMonths.length === 0) {
-    checklistContainer.innerHTML = `
-      <div class="col-span-full text-center py-4 text-emerald-700 font-medium text-xs">
-        এই ঋণে বর্তমানে কোনো বকেয়া কিস্তি নেই। তবে অগ্রিম কিস্তি হিসেবে চলতি/পরবর্তী মাস পরিশোধ করতে পারেন।
-      </div>
-    `;
-    document.getElementById('ipcTotalAmount').value = record.monthlyInstallment;
-    document.getElementById('ipcCalculatedSummaryText').textContent = '১ টি অগ্রিম কিস্তি (ঐচ্ছিক)';
-    updateIpcAutoRemarks([]);
-  } else {
-    checklistContainer.innerHTML = currentIpcMonths.map(m => {
-      return `
-        <label class="flex items-center space-x-2 bg-white p-2 rounded-lg border border-gray-200 cursor-pointer hover:border-emerald-500 text-xs">
-          <input type="checkbox" name="ipcMonthItem" value="${m}" checked onchange="onIpcMonthCheckboxChange()" class="rounded text-emerald-600 focus:ring-emerald-500">
-          <span class="font-mono font-bold text-gray-800">${formatBengaliMonth(m)}</span>
-        </label>
-      `;
-    }).join('');
+  // Initialize Month Picker
+  const monthPicker = document.getElementById('ipcManualMonthPicker');
+  if (monthPicker) monthPicker.value = startMonth;
 
-    onIpcMonthCheckboxChange();
+  // Clear manual months list
+  const monthsList = document.getElementById('ipcManualMonthsList');
+  if (monthsList) monthsList.innerHTML = '';
+
+  // Add the initial month automatically
+  addIpcManualMonth();
+
+  // Set default manual amount = monthly installment
+  const manualAmtInput = document.getElementById('ipcManualAmount');
+  if (manualAmtInput) {
+    manualAmtInput.value = installment > 0 ? installment.toFixed(2) : '';
+  }
+  distributeIpcManualTotal();
+
+  // Initialize auto remarks
+  const remarksInput = document.getElementById('ipcRemarks');
+  if (remarksInput) {
+    remarksInput.dataset.userEdited = 'false';
+    remarksInput.value = formatIpcMonthsRange([startMonth]);
   }
 
-  openModal('interPbsCollectionModal');
+  // Populate Checklist (in case user switches off manual toggle)
+  populateIpcChecklist(record, startMonth);
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function populateIpcChecklist(record, startMonth) {
+  const checklist = document.getElementById('ipcMonthsChecklist');
+  if (!checklist) return;
+
+  let monthsToOffer = [];
+  if (record.dueMonthsList && Array.isArray(record.dueMonthsList) && record.dueMonthsList.length > 0) {
+    monthsToOffer = [...record.dueMonthsList];
+  } else {
+    // Generate next 6 months starting from startMonth
+    let cur = startMonth;
+    for (let i = 0; i < 6; i++) {
+      monthsToOffer.push(cur);
+      cur = getNextMonth(cur);
+    }
+  }
+
+  checklist.innerHTML = monthsToOffer.map((m, idx) => `
+    <label class="flex items-center space-x-2 p-2 bg-white rounded-lg border border-gray-200 hover:bg-emerald-50 cursor-pointer text-xs">
+      <input type="checkbox" name="ipcMonthItem" value="${m}" ${idx === 0 ? 'checked' : ''} onchange="onIpcMonthCheckboxChange()" class="rounded text-emerald-600 focus:ring-emerald-500">
+      <span class="font-medium text-gray-800">${formatBengaliMonth(m)}</span>
+    </label>
+  `).join('');
+
+  onIpcMonthCheckboxChange();
 }
 
 function toggleIpcManualPosting() {
   const manual = document.getElementById('ipcManualPostingToggle')?.checked || false;
   document.getElementById('ipcStandardPostingFields')?.classList.toggle('hidden', manual);
   document.getElementById('ipcManualPostingFields')?.classList.toggle('hidden', !manual);
-  document.getElementById('ipcTotalAmount').required = !manual;
-  document.getElementById('ipcManualAmount').required = manual;
+  const totalAmountEl = document.getElementById('ipcTotalAmount');
+  const manualAmountEl = document.getElementById('ipcManualAmount');
+  if (totalAmountEl) totalAmountEl.required = !manual;
+  if (manualAmountEl) manualAmountEl.required = manual;
   updateIpcAutoRemarks(manual
     ? Array.from(document.querySelectorAll('#ipcManualMonthsList [data-month]')).map(item => item.dataset.month)
     : Array.from(document.querySelectorAll('input[name="ipcMonthItem"]:checked')).map(input => input.value));
@@ -7114,30 +9689,34 @@ function addIpcManualMonth() {
 
   const item = document.createElement('div');
   item.dataset.month = month;
-  item.className = 'flex items-center gap-2 p-2 bg-white border border-blue-300 rounded-lg';
+  item.className = 'flex items-center justify-between gap-2 p-2 bg-white border border-blue-300 rounded-lg shadow-2xs';
 
   const label = document.createElement('span');
-  label.className = 'flex-1 text-xs font-semibold text-blue-900';
+  label.className = 'flex-1 text-xs font-bold text-blue-950';
   label.textContent = formatBengaliMonth(month);
+
+  const amountField = document.createElement('div');
+  amountField.className = 'flex items-center gap-1.5';
+
   const amountInput = document.createElement('input');
   amountInput.type = 'number';
   amountInput.min = '0.01';
   amountInput.step = '0.01';
   amountInput.dataset.monthAmount = '';
   amountInput.setAttribute('aria-label', `${formatBengaliMonth(month)} মাসের টাকার পরিমাণ`);
-  amountInput.className = 'w-28 p-1.5 border border-gray-300 rounded text-xs font-mono text-right';
+  amountInput.className = 'w-28 p-1.5 border border-gray-300 rounded text-xs font-mono font-bold text-right text-gray-900 focus:ring-blue-500';
   amountInput.addEventListener('input', () => {
     item.dataset.autoSplit = 'false';
     updateIpcManualTotalFromMonthAmounts();
   });
-  const amountField = document.createElement('div');
-  amountField.className = 'flex items-center gap-1';
+
   const currencyLabel = document.createElement('span');
-  currencyLabel.className = 'text-[10px] text-gray-600';
+  currencyLabel.className = 'text-xs text-gray-700 font-medium';
   currencyLabel.textContent = 'টাকা';
+
   const removeButton = document.createElement('button');
   removeButton.type = 'button';
-  removeButton.className = 'text-red-600 hover:text-red-800 font-bold';
+  removeButton.className = 'text-red-500 hover:text-red-700 font-bold px-1.5 text-base leading-none cursor-pointer';
   removeButton.setAttribute('aria-label', `${formatBengaliMonth(month)} মাস সরান`);
   removeButton.textContent = '×';
   removeButton.addEventListener('click', () => {
@@ -7148,9 +9727,27 @@ function addIpcManualMonth() {
     }
   });
 
-  amountField.append(amountInput, currencyLabel);
-  item.append(label, amountField, removeButton);
+  amountField.append(amountInput, currencyLabel, removeButton);
+  item.append(label, amountField);
   monthsList.append(item);
+
+  // Auto-advance month picker to the next consecutive month for fast 1-click addition!
+  monthPicker.value = getNextMonth(month);
+
+  // If total is empty or 0, default based on monthly installment * count
+  const loanId = document.getElementById('ipcLoanId')?.value;
+  const record = (transferredLoansData?.records || []).find(r => r.loanId == loanId)
+    || (state.loans || []).find(l => l.id == loanId);
+  const inst = Number(record?.monthlyInstallment || record?.monthly_installment || 0);
+  const curTotalInput = document.getElementById('ipcManualAmount');
+  const count = monthsList.querySelectorAll('[data-month]').length;
+
+  if (curTotalInput && (!curTotalInput.value || parseFloat(curTotalInput.value) <= 0 || count === 1)) {
+    if (inst > 0) {
+      curTotalInput.value = (inst * count).toFixed(2);
+    }
+  }
+
   distributeIpcManualTotal();
   if (document.getElementById('ipcManualPostingToggle')?.checked) {
     updateIpcAutoRemarks(Array.from(monthsList.querySelectorAll('[data-month]')).map(monthItem => monthItem.dataset.month));
@@ -7218,45 +9815,6 @@ function updateIpcAutoRemarks(months) {
   remarksInput.value = formatIpcMonthsRange(months);
 }
 
-async function toggleTransferredLoanSalaryDeduction(loanId, suspended) {
-  const record = transferredLoansData?.records?.find(r => r.loanId === loanId)
-    || (state.loans || []).find(loan => loan.id === loanId);
-  if (!record) {
-    showToast('ঋণ রেকর্ডটি পাওয়া যায়নি।', 'error');
-    return;
-  }
-
-  const action = suspended ? 'স্থগিত' : 'পুনরায় চালু';
-  const employeeName = record.empName || record.emp_name;
-  const loanNo = record.loanNo || record.loan_no;
-  if (!await confirmWithSweetAlert(`${employeeName}-এর ঋণ নং ${loanNo}-এর বেতন কিস্তি কর্তন ${action} করবেন?`)) {
-    return;
-  }
-
-  try {
-    const result = await API.put('/transferred-loans/salary-deduction-suspension', {
-      loanId,
-      suspended
-    });
-    if (!result?.success) {
-      showToast(result?.message || 'বেতন কর্তনের অবস্থা আপডেট করা যায়নি।', 'error');
-      return;
-    }
-    showToast(result.message, 'success');
-    if (typeof loadTransferredLoans === 'function' && transferredLoansData?.records?.some(r => r.loanId === loanId)) {
-      await loadTransferredLoans();
-    }
-    if (typeof loadLoans === 'function') loadLoans();
-  } catch (error) {
-    console.error('toggleTransferredLoanSalaryDeduction error:', error);
-    showToast(error.message || 'বেতন কর্তনের অবস্থা আপডেট করা যায়নি।', 'error');
-  }
-}
-
-function toggleLoanSalaryDeduction(loanId, suspended) {
-  toggleTransferredLoanSalaryDeduction(loanId, suspended);
-}
-
 function onIpcMonthCheckboxChange() {
   const checkboxes = document.querySelectorAll('input[name="ipcMonthItem"]:checked');
   const selectedMonths = Array.from(checkboxes).map(c => c.value);
@@ -7264,13 +9822,18 @@ function onIpcMonthCheckboxChange() {
     ? Array.from(document.querySelectorAll('#ipcManualMonthsList [data-month]')).map(item => item.dataset.month)
     : selectedMonths);
   const loanId = parseInt(document.getElementById('ipcLoanId')?.value, 10);
-  const record = transferredLoansData?.records?.find(r => r.loanId === loanId);
-  const installment = record ? record.monthlyInstallment : 0;
+  const record = (transferredLoansData?.records || []).find(r => r.loanId === loanId)
+    || (state.loans || []).find(l => l.id === loanId);
+  const installment = Number(record?.monthlyInstallment || record?.monthly_installment || 0);
   const totalAmount = selectedMonths.length * installment;
 
-  document.getElementById('ipcTotalAmount').value = totalAmount;
-  document.getElementById('ipcCalculatedSummaryText').textContent =
-    `${toBn(selectedMonths.length)} টি মাস নির্বাচিত | মোট কিস্তি: ${formatBDT(totalAmount)} টাকা`;
+  const totalAmtInput = document.getElementById('ipcTotalAmount');
+  if (totalAmtInput) totalAmtInput.value = totalAmount;
+
+  const summaryText = document.getElementById('ipcCalculatedSummaryText');
+  if (summaryText) {
+    summaryText.textContent = `${toBn(selectedMonths.length)} টি মাস নির্বাচিত | মোট কিস্তি: ${formatBDT(totalAmount)} টাকা`;
+  }
 
   const toggleBtn = document.getElementById('ipcToggleMonthsBtn');
   const allCheckboxes = document.querySelectorAll('input[name="ipcMonthItem"]');
@@ -7340,12 +9903,16 @@ async function submitInterPbsCollection(event) {
     return;
   }
 
-  const record = transferredLoansData?.records?.find(r => r.loanId == loanId);
+  const record = (transferredLoansData?.records || []).find(r => r.loanId == loanId)
+    || (state.loans || []).find(l => l.id == loanId);
+  const repaymentMethod = document.getElementById('ipcRepaymentMethod')?.value || 'INTER_PBS_COLLECTION';
+
   if (manualPosting) {
     const monthBreakdown = selectedMonths.map((month, index) =>
         `${formatBengaliMonth(month)}: ${formatIpcAmount(manualAmounts[index])} টাকা`
       ).join(' | ');
-    const excess = record ? Math.max(0, totalAmount - record.totalBalance) : 0;
+    const totBal = Number(record?.totalBalance !== undefined ? record.totalBalance : ((record?.principal_balance || 0) + (record?.interest_balance || 0)));
+    const excess = totBal > 0 ? Math.max(0, totalAmount - totBal) : 0;
     const excessNote = excess > 0
         ? ` ঋণের স্থিতির অতিরিক্ত ${formatIpcAmount(excess)} টাকা অগ্রিম জমা হবে; ভবিষ্যৎ কিস্তিতে স্বয়ংক্রিয়ভাবে সমন্বয় হবে না।`
       : '';
@@ -7371,7 +9938,8 @@ async function submitInterPbsCollection(event) {
   try {
     const res = await API.post('/transferred-loans/post-collection', {
       loan_id: loanId,
-      source_pbs_name: record ? record.currentPostingPbs : '',
+      repayment_method: repaymentMethod,
+      source_pbs_name: record ? (record.currentPostingPbs || record.current_posting_pbs || '') : '',
       receipt_date: receiptDate,
       voucher_no: voucherNo,
       months: selectedMonths,
@@ -7384,9 +9952,11 @@ async function submitInterPbsCollection(event) {
     if (res.success) {
       closeModal('interPbsCollectionModal');
       showToast(res.message || 'কিস্তি পোস্টিং সফলভাবে সম্পন্ন হয়েছে।', 'success');
-      loadTransferredLoans();
+      if (typeof loadTransferredLoans === 'function') loadTransferredLoans();
       if (typeof loadLoans === 'function') loadLoans();
       if (typeof loadDashboard === 'function') loadDashboard();
+      if (typeof loadCurrentMonthDeductionSnapshot === 'function') loadCurrentMonthDeductionSnapshot();
+      if (typeof loadRepayments === 'function') loadRepayments();
     } else {
       showToast(res.message || 'পোস্টিং ব্যর্থ হয়েছে।', 'error');
     }
@@ -7396,11 +9966,12 @@ async function submitInterPbsCollection(event) {
   } finally {
     if (submitBtn) {
       submitBtn.disabled = false;
-      submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4 mr-1"></i> কিস্তি পোস্টিং সম্পন্ন করুন`;
+      submitBtn.innerHTML = `<i data-lucide="check" class="w-4 h-4 mr-1"></i> <span id="ipcSubmitBtnText">কিস্তি পোস্টিং সম্পন্ন করুন</span>`;
       if (window.lucide) lucide.createIcons();
     }
   }
 }
+
 
 async function openDemandLetterModal(loanId) {
   const title = document.getElementById('demandLetterModalTitle');
@@ -7484,9 +10055,55 @@ async function openConsolidatedDemandLetter() {
   }
 }
 
+async function openPbsDemandLetterModal(pbsName) {
+  if (!pbsName) {
+    showToast('পবিসের নাম পাওয়া যায়নি।', 'error');
+    return;
+  }
+
+  const title = document.getElementById('demandLetterModalTitle');
+  if (title) title.textContent = `${pbsName}-এর তাগাদা পত্র (Official PBS Demand Letter)`;
+  openModal('demandLetterModal');
+
+  const sheet = document.getElementById('demandLetterPaperSheet');
+  if (sheet) {
+    sheet.innerHTML = `
+      <div class="text-center py-16 text-gray-400">
+        <div class="w-8 h-8 border-4 border-amber-600 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+        <p class="text-sm font-semibold text-gray-700">${escapeHtml(pbsName)}-এর অনুকূলে তাগাদা পত্র প্রস্তুত করা হচ্ছে...</p>
+      </div>
+    `;
+  }
+
+  try {
+    const result = await API.post('/transferred-loans/generate-pbs-demand-letter', {
+      target_pbs_name: pbsName
+    });
+
+    if (!result.success) {
+      throw new Error(result.message || 'তাগাদা পত্র তৈরি করা যায়নি।');
+    }
+
+    currentDemandLetterData = result;
+    renderDemandLetterPaper(result);
+    showToast(result.message, 'success');
+  } catch (error) {
+    console.error('openPbsDemandLetterModal error:', error);
+    if (sheet) {
+      sheet.innerHTML = `<div class="p-8 text-center text-red-600">${escapeHtml(error.message || 'সার্ভার সংযোগ ত্রুটি')}</div>`;
+    }
+    showToast(error.message || 'পবিস ভিত্তিক তাগাদা পত্র তৈরি করা যায়নি।', 'error');
+  }
+}
+
 function renderDemandLetterPaper(data) {
   const sheet = document.getElementById('demandLetterPaperSheet');
   if (!sheet) return;
+
+  if (data.pbsWise) {
+    renderPbsWiseDemandLetterPaper(data, sheet);
+    return;
+  }
 
   if (data.consolidated) {
     renderConsolidatedDemandLetterPaper(data, sheet);
@@ -7533,10 +10150,9 @@ function renderDemandLetterPaper(data) {
 
     <!-- Recipient -->
     <div class="text-xs space-y-0.5 pt-2">
-      <p class="font-bold">প্রাপক:</p>
       <p class="font-bold text-gray-900">সিনিয়র জেনারেল ম্যানেজার / জেনারেল ম্যানেজার</p>
       <p class="font-semibold text-gray-800">${letter.target_pbs_name}</p>
-      <p class="text-gray-600">${target.address || 'সংশ্লিষ্ট পবিস সদর দপ্তর'}</p>
+      ${target.address ? `<p class="text-gray-600">${escapeHtml(target.address)}</p>` : ''}
     </div>
 
     <!-- Subject & Reference -->
@@ -7552,7 +10168,6 @@ function renderDemandLetterPaper(data) {
     <!-- Letter Body -->
     <div class="text-xs text-gray-900 text-justify leading-relaxed space-y-3 pt-1">
       <p>
-        মহোদয়,<br>
         উপর্যুক্ত বিষয় ও সূত্রের প্রেক্ষিতে জানানো যাচ্ছে যে, জনাব <strong>${letter.employee_name}</strong>, পদবী: <strong>${letter.designation}</strong>, অত্র পবিসে কর্মরত থাকাকালীন তাঁর অনুকূলে সর্বমোট <strong>${formatBDT(letter.disbursed_amount)}</strong> টাকা গৃহ নির্মাণ ঋণ মঞ্জুর ও বিতরণ করা হয়। পরবর্তীতে তিনি অত্র পবিস হতে বদলি হয়ে আপনার নিয়ন্ত্রণাধীন পল্লী বিদ্যুৎ সমিতিতে যোগদান করেছেন।
       </p>
       <p>
@@ -7659,14 +10274,16 @@ function renderConsolidatedDemandLetterPaper(data, sheet) {
 
     <div class="flex justify-between items-start text-xs font-semibold pt-1">
       <div>
-        <div>স্মারক নং: <strong class="font-mono text-gray-900">${escapeHtml(letter.memo_no)}</strong></div>
-        <div class="text-[11px] text-gray-600">পত্র নং: ${escapeHtml(letter.letter_no)}</div>
+        <span>স্মারক নং: </span>
+        <strong class="font-mono text-gray-900">${escapeHtml(letter.memo_no)}</strong>
       </div>
-      <div class="text-right">তারিখ: <strong>${toBengaliCalendarDate(letter.letter_date)}</strong></div>
+      <div class="text-right">
+        <div>তারিখ: <strong>${toBengaliCalendarDate(letter.letter_date)}</strong></div>
+        <div class="text-[11px] text-gray-600 font-mono">${data.letterDateFormatted || formatOfficeNoteDate(letter.letter_date, 'english')}</div>
+      </div>
     </div>
 
     <div class="text-xs space-y-0.5 pt-2">
-      <p class="font-bold">প্রাপক:</p>
       <p class="font-bold text-gray-900">সিনিয়র জেনারেল ম্যানেজার / জেনারেল ম্যানেজার</p>
       <p class="text-gray-700">সংশ্লিষ্ট পল্লী বিদ্যুৎ সমিতি</p>
     </div>
@@ -7676,7 +10293,6 @@ function renderConsolidatedDemandLetterPaper(data, sheet) {
         <span class="underline">বিষয়:</span> অত্র পবিস হতে বদলিকৃত ঋণগ্রহীতাদের বকেয়া কিস্তি কর্তনপূর্বক প্রেরণ প্রসঙ্গে।
       </div>
       <div class="text-xs text-gray-900 text-justify leading-relaxed pt-1 space-y-2">
-        <p>মহোদয়,</p>
         <p>
           অত্র পল্লী বিদ্যুৎ সমিতি হতে গৃহ নির্মাণ ঋণ গ্রহণ করে আপনাদের পবিসে কর্মরত নিম্নবর্ণিত কর্মকর্তা/কর্মচারীদের বেতন হতে ঋণের মাসিক কিস্তি কর্তন করে অত্র পবিসের অনুকূলে প্রেরণের জন্য অনুরোধ করা যাচ্ছে। হিসাব পর্যালোচনায় ${toBn(pbsSummary.length)}টি পবিসের ${toBn(rows.length)} জন ঋণগ্রহীতার মোট ${toBn(letter.total_due_installments)}টি কিস্তি, সর্বমোট <strong>${formatBDT(letter.total_due_amount)}</strong> টাকা বকেয়া পাওয়া গেছে।
         </p>
@@ -7744,6 +10360,146 @@ function renderConsolidatedDemandLetterPaper(data, sheet) {
   `;
 }
 
+function renderPbsWiseDemandLetterPaper(data, sheet) {
+  const letter = data.letter;
+  const own = data.ownPbs || {};
+  const target = data.targetPbs || {};
+  const rows = data.rows || [];
+  const ownPbsName = escapeHtml(own.pbs_name || 'গাজীপুর পল্লী বিদ্যুৎ সমিতি-২');
+  const ownAddress = escapeHtml(own.address || '');
+  const bankName = escapeHtml(own.bank_name || '');
+  const bankBranch = escapeHtml(own.bank_branch || '');
+  const accountNo = escapeHtml(own.account_no || '');
+  const routingNo = escapeHtml(own.routing_no || '');
+  const targetPbsName = escapeHtml(letter.target_pbs_name);
+  const targetAddress = escapeHtml(target.address || '');
+
+  const detailRows = rows.map((row, index) => `
+    <tr class="border-b border-gray-400">
+      <td class="py-1.5 px-2 text-center border border-gray-400 font-mono">${toBn(index + 1)}</td>
+      <td class="py-1.5 px-2 border border-gray-400">
+        <strong class="text-gray-950">${escapeHtml(row.employeeName)}</strong>
+        <div class="text-[10px] text-gray-600">${escapeHtml(row.designation)} | পে আইডি: <span class="font-mono font-semibold">${escapeHtml(row.empCode)}</span></div>
+      </td>
+      <td class="py-1.5 px-2 text-center border border-gray-400 font-mono font-semibold">${escapeHtml(row.loanNo)}</td>
+      <td class="py-1.5 px-2 text-center border border-gray-400 text-xs">${escapeHtml(row.duePeriodText)}</td>
+      <td class="py-1.5 px-2 text-center border border-gray-400 font-mono font-bold">${toBn(row.dueMonthsCount)} মাস</td>
+      <td class="py-1.5 px-2 text-right border border-gray-400 font-mono">${formatBDT(row.monthlyInstallment)}</td>
+      <td class="py-1.5 px-2 text-right border border-gray-400 font-mono font-bold text-gray-950">${formatBDT(row.overdueAmount)}</td>
+    </tr>
+  `).join('');
+
+  sheet.innerHTML = `
+    <!-- Top Header / Letterhead -->
+    ${renderPbsLetterhead(own)}
+
+    <!-- Memo and Date Line -->
+    <div class="flex justify-between items-start text-xs font-semibold pt-1">
+      <div>
+        <span>স্মারক নং: </span>
+        <strong class="font-mono text-gray-900">${escapeHtml(letter.memo_no)}</strong>
+      </div>
+      <div class="text-right">
+        <div>তারিখ: <strong>${toBengaliCalendarDate(letter.letter_date)}</strong></div>
+        <div class="text-[11px] text-gray-600 font-mono">${data.letterDateFormatted || letter.letter_date} খ্রি:</div>
+      </div>
+    </div>
+
+    <!-- Recipient -->
+    <div class="text-xs space-y-0.5 pt-2">
+      <p class="font-bold text-gray-900">সিনিয়র জেনারেল ম্যানেজার / জেনারেল ম্যানেজার</p>
+      <p class="font-semibold text-gray-800">${targetPbsName}</p>
+      ${targetAddress ? `<p class="text-gray-600">${targetAddress}</p>` : ''}
+    </div>
+
+    <!-- Subject & Reference -->
+    <div class="space-y-1 pt-1">
+      <div class="text-xs font-bold text-gray-950 leading-relaxed bg-gray-50 p-2 rounded border border-gray-200">
+        <span class="underline">বিষয়:</span> অত্র পবিস হতে আপনার পবিসে বদলিকৃত ঋণগ্রহীতাদের গৃহ নির্মাণ ঋণের বকেয়া কিস্তির টাকা কর্তনপূর্বক প্রেরণ প্রসঙ্গে।
+      </div>
+    </div>
+
+    <!-- Letter Body -->
+    <div class="text-xs text-gray-900 text-justify leading-relaxed space-y-3 pt-1">
+      <p>
+        উপর্যুক্ত বিষয়ের প্রেক্ষিতে জানানো যাচ্ছে যে, অত্র পল্লী বিদ্যুৎ সমিতি হতে নিম্নবর্ণিত কর্মকর্তা/কর্মচারীগণ অত্র পবিসে কর্মরত থাকাকালীন তাদের অনুকূলে গৃহ নির্মাণ ঋণ মঞ্জুর ও বিতরণ করা হয়। পরবর্তীতে তাঁরা অত্র পবিস হতে বদলি হয়ে আপনার নিয়ন্ত্রণাধীন <strong>${targetPbsName}</strong>-এ যোগদান করেছেন।
+      </p>
+      <p>
+        নীতিমালা ও মঞ্জুরির শর্তানুযায়ী সংশ্লিষ্ট কর্মচারীদের বেতন-ভাতা হতে প্রতি মাসে নিয়মিতভাবে গৃহ নির্মাণ ঋণের কিস্তি কর্তন করে অত্র পবিসের ব্যাংক হিসাবে প্রেরণের বিধান রয়েছে। কিন্তু অত্র পবিসের হিসাব বিবরণী পর্যালোচনায় দেখা যায় যে, নিম্নবর্ণিত ঋণগ্রহীতাদের বেতন হতে বর্ণিত সময়ের কিস্তির অর্থ কর্তনপূর্বক অত্র পবিসে প্রেরণ করা হয়নি। ফলে অদ্যবধি তাদের বকেয়া কিস্তির সর্বমোট পাওনা দাঁড়িয়েছে <strong>${formatBDT(letter.total_due_amount)}</strong> টাকা (কথায়: <strong>${letter.amount_in_words}</strong> মাত্র)।
+      </p>
+
+      <!-- Due Breakdown Table -->
+      <div class="py-1">
+        <p class="font-bold text-gray-800 mb-1 text-[11px]">ঋণগ্রহীতাদের বকেয়া কিস্তির বিবরণী:</p>
+        <table class="w-full border-collapse border border-gray-400 text-xs text-left">
+          <thead>
+            <tr class="bg-gray-100 font-bold border-b border-gray-400 text-gray-800">
+              <th class="py-1.5 px-2 text-center border border-gray-400 w-10">ক্র:</th>
+              <th class="py-1.5 px-2 border border-gray-400">কর্মচারীর নাম, পদবী ও পে আইডি</th>
+              <th class="py-1.5 px-2 text-center border border-gray-400">ঋণ নং</th>
+              <th class="py-1.5 px-2 text-center border border-gray-400">বকেয়ার সময়সীমা</th>
+              <th class="py-1.5 px-2 text-center border border-gray-400">বকেয়া কিস্তি</th>
+              <th class="py-1.5 px-2 text-right border border-gray-400">মাসিক কিস্তি</th>
+              <th class="py-1.5 px-2 text-right border border-gray-400">মোট বকেয়া (টাকা)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${detailRows}
+          </tbody>
+          <tfoot>
+            <tr class="bg-gray-50 font-bold border-t-2 border-gray-800">
+              <td colspan="6" class="py-1.5 px-2 text-right border border-gray-400 font-bold text-gray-900">
+                সর্বমোট বকেয়া পাওনা (${toBn(letter.employee_count)} জন কর্মচারীর ${toBn(letter.total_due_installments)}টি কিস্তি):
+              </td>
+              <td class="py-1.5 px-2 text-right border border-gray-400 font-mono text-sm font-black text-gray-950">${formatBDT(letter.total_due_amount)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        <p class="text-[11px] mt-1 text-gray-800">কথায়: <strong>${escapeHtml(letter.amount_in_words)}</strong></p>
+      </div>
+
+      <p>
+        এমতাবস্থায়, ঋণ সমন্বয় নিশ্চিতকরণার্থে উল্লিখিত কর্মচারীদের বেতন হতে বকেয়া কিস্তির সর্বমোট <strong>${formatBDT(letter.total_due_amount)}</strong> টাকা অবিলম্বে কর্তনপূর্বক বিইএফটিএন (BEFTN)/এনপিএসবি (NPSB)/অনলাইন ব্যাংকিং মাধ্যমে অত্র পবিসের নিম্নোক্ত ব্যাংক হিসাব নম্বরে প্রেরণের প্রয়োজনীয় ব্যবস্থা গ্রহণের জন্য এবং আগামী মাসগুলোতেও নিয়মিত কিস্তি কর্তন অব্যাহত রাখার জন্য বিনীত অনুরোধ করা হলো:
+      </p>
+
+      <!-- Bank Details Box -->
+      <div class="bg-gray-50 border border-gray-300 rounded p-3 text-xs space-y-1 font-mono text-gray-900 max-w-lg mx-auto">
+        <div class="flex justify-between"><span>ব্যাংক ও শাখার নাম:</span> <strong>${bankName}${bankBranch ? `, ${bankBranch}` : ''}</strong></div>
+        <div class="flex justify-between"><span>হিসাবের শিরোনাম:</span> <strong>${ownPbsName}</strong></div>
+        <div class="flex justify-between"><span>ব্যাংক হিসাব নং:</span> <strong class="text-emerald-950 text-sm">${accountNo}</strong></div>
+        <div class="flex justify-between"><span>রাউটিং নম্বর:</span> <strong>${routingNo}</strong></div>
+      </div>
+    </div>
+
+    <!-- Official PBS 2-Officer Signatures -->
+    <div class="demand-letter-gm-signature pt-4 pb-2 flex justify-between items-end text-xs text-gray-900">
+      <div class="w-52"></div>
+
+      <div class="demand-letter-signature-block text-center w-52 space-y-0.5">
+        <div class="border-t border-gray-700 pt-1 font-bold text-gray-950">${escapeHtml(own.gm_name || '')}</div>
+        <div class="text-gray-700 font-semibold">${PBS_GENERAL_MANAGER_TITLE}</div>
+        <div class="text-[11px] text-gray-500">${ownPbsName}</div>
+      </div>
+    </div>
+
+    <!-- Copy Forward (অনুলিপি) -->
+    <div class="pt-3 border-t border-gray-300 text-[11px] text-gray-700 space-y-1">
+      <p class="font-bold">অনুলিপি (সদয় অবগতি ও প্রয়োজনীয় ব্যবস্থা গ্রহণের জন্য প্রেরিত হলো):</p>
+      <p class="pl-3">১। পরিচালক, পবিস নিরীক্ষা পরিদপ্তর, বাংলাদেশ পল্লী বিদ্যুতায়ন বোর্ড, ঢাকা।</p>
+      <p class="pl-3">২। সংশ্লিষ্ট কর্মকর্তা/কর্মচারীগণ, ${targetPbsName} — বকেয়া কিস্তির টাকা জরুরি ভিত্তিতে পরিশোধের তাগিদসহ।</p>
+      <p class="pl-3">৩। অফিস কপি / মাস্টার ফাইল।</p>
+    </div>
+    <div class="demand-letter-agm-signature grid grid-cols-2 pt-2 text-xs text-gray-700">
+      <div></div>
+      <div class="demand-letter-signature-block w-52 justify-self-end space-y-0.5 text-center">
+        <div class="border-t border-gray-700 pt-1 font-bold text-gray-950">${escapeHtml(own.agm_finance_name || '')}</div>
+        <div class="font-semibold">${PBS_AGM_FINANCE_TITLE}</div>
+        <div class="text-[11px] text-gray-500">${ownPbsName}${ownAddress ? `, ${ownAddress}` : ''}</div>
+      </div>
+    </div>
+  `;
+}
+
 function printDemandLetterDocument() {
   const content = document.getElementById('demandLetterPaperSheet');
   if (!content) {
@@ -7769,12 +10525,15 @@ function printDemandLetterDocument() {
 
   const doc = printFrame.contentWindow.document;
   doc.open();
+  const printTitle = currentDemandLetterData?.pbsWise
+    ? `তাগাদা পত্র - ${currentDemandLetterData?.letter?.target_pbs_name}`
+    : (currentDemandLetterData?.consolidated ? 'তাগাদা পত্র - সকল পবিস' : (currentDemandLetterData?.letter?.employee_name || 'গৃহ ঋণ'));
   doc.write(`
     <!DOCTYPE html>
     <html lang="bn">
     <head>
       <meta charset="UTF-8">
-      <title>তাগাদা পত্র - ${currentDemandLetterData?.consolidated ? 'সকল পবিস' : (currentDemandLetterData?.letter?.employee_name || 'গৃহ ঋণ')}</title>
+      <title>${printTitle}</title>
       <style>
         @page {
           size: A4 portrait;
@@ -7822,8 +10581,8 @@ function printDemandLetterDocument() {
           padding-bottom: 2px !important;
           page-break-inside: avoid;
         }
-        .demand-letter-gm-signature > div:first-child,
-        .demand-letter-agm-signature > div:first-child {
+        .demand-letter-gm-signature > div:first-child:empty,
+        .demand-letter-agm-signature > div:first-child:empty {
           display: none;
         }
         .demand-letter-signature-block {
@@ -7923,6 +10682,13 @@ window.filterBySpecificPbs = filterBySpecificPbs;
 window.filterTransferredLoans = filterTransferredLoans;
 window.resetTransferredLoansFilter = resetTransferredLoansFilter;
 window.openInterPbsCollectionModal = openInterPbsCollectionModal;
+window.openLoanInstallmentPostingModal = openLoanInstallmentPostingModal;
+window.onIpcLoanSelectChange = onIpcLoanSelectChange;
+window.onIpcRepaymentMethodChange = onIpcRepaymentMethodChange;
+window.populateIpcModalForLoan = populateIpcModalForLoan;
+window.toggleIpcManualPosting = toggleIpcManualPosting;
+window.addIpcManualMonth = addIpcManualMonth;
+window.distributeIpcManualTotal = distributeIpcManualTotal;
 window.onIpcMonthCheckboxChange = onIpcMonthCheckboxChange;
 window.toggleAllIpcMonths = toggleAllIpcMonths;
 window.submitInterPbsCollection = submitInterPbsCollection;
@@ -7940,3 +10706,666 @@ window.toggleRepaymentSelection = toggleRepaymentSelection;
 window.toggleAllRepaymentsSelection = toggleAllRepaymentsSelection;
 window.deleteSelectedRepayments = deleteSelectedRepayments;
 window.updateRepaymentSelectionUI = updateRepaymentSelectionUI;
+window.filterDashboardBorrowers = filterDashboardBorrowers;
+window.filterDeductionsBorrowers = filterDeductionsBorrowers;
+window.searchDeductionsBorrowers = searchDeductionsBorrowers;
+window.switchDeductionsSubtab = switchDeductionsSubtab;
+window.loadCurrentMonthDeductionSnapshot = loadCurrentMonthDeductionSnapshot;
+window.loadDeductionsTab = loadDeductionsTab;
+window.isLoanInGracePeriod = isLoanInGracePeriod;
+window.getLoanScheduledStartMonth = getLoanScheduledStartMonth;
+window.toggleLoanOpeningBalanceFields = toggleLoanOpeningBalanceFields;
+window.updateOpeningBalanceLiveHint = updateOpeningBalanceLiveHint;
+
+// Window Exposures for Multi-Month Repayment & Unified Deduction Modal
+window.switchDeductionModalTab = switchDeductionModalTab;
+window.focusBorrowerSelect = focusBorrowerSelect;
+window.onDeductionBorrowerSelected = onDeductionBorrowerSelected;
+window.onMultiRangeChange = onMultiRangeChange;
+window.setMultiQuickRange = setMultiQuickRange;
+window.onMultiTotalAmountInput = onMultiTotalAmountInput;
+window.addMultiMonthRow = addMultiMonthRow;
+window.removeMultiMonthRow = removeMultiMonthRow;
+window.onScheduleMonthChange = onScheduleMonthChange;
+window.onScheduleAmountChange = onScheduleAmountChange;
+window.onScheduleVoucherChange = onScheduleVoucherChange;
+window.onScheduleRemarksChange = onScheduleRemarksChange;
+window.renderMultiMonthSchedule = renderMultiMonthSchedule;
+window.recalculateMultiMonthSchedule = recalculateMultiMonthSchedule;
+window.submitMultiMonthRepayment = submitMultiMonthRepayment;
+window.openMultiMonthPostingForLoan = openMultiMonthPostingForLoan;
+window.populateRepaymentLoanDropdowns = populateRepaymentLoanDropdowns;
+window.toggleBorrowerSearchDropdown = toggleBorrowerSearchDropdown;
+window.filterBorrowerDropdownList = filterBorrowerDropdownList;
+window.renderBorrowerDropdownItems = renderBorrowerDropdownItems;
+window.selectDeductionBorrower = selectDeductionBorrower;
+
+// ---- User Manual Print ----
+function printUserManual() {
+  const printClass = 'print-user-manual';
+  const cleanup = () => document.body.classList.remove(printClass);
+  window.addEventListener('afterprint', cleanup, { once: true });
+  document.body.classList.add(printClass);
+  try {
+    window.print();
+  } catch (e) {
+    cleanup();
+    window.removeEventListener('afterprint', cleanup);
+  }
+}
+window.printUserManual = printUserManual;
+
+// ==========================================
+// INTEREST CALCULATION REPORT (Simulation / Cutover / Manual Loans)
+// ==========================================
+let currentInterestCalcData = null;
+
+async function loadInterestCalcTab() {
+  const select = document.getElementById('interestCalcLoanSelect');
+  if (!select) return;
+
+  try {
+    const res = await API.get('/loans');
+    const loans = res.loans || res || [];
+    select.innerHTML = '<option value="">--- কর্মকর্তা/কর্মচারী ও ঋণ নির্বাচন করুন ---</option>';
+
+    loans.forEach(loan => {
+      const empCode = loan.emp_code || '';
+      const empName = loan.emp_name || '';
+      const loanNo = loan.loan_no || '';
+      const lotName = loan.loan_lot_name || '';
+      const amount = formatBDT(loan.disbursed_amount || loan.sanction_amount);
+      const isCutover = loan.opening_balance_as_of ? ' [কাগজের লেজার / কাট-অফ]' : '';
+      select.innerHTML += `
+        <option value="${loan.id}" data-disbursement="${loan.disbursement_date || ''}" data-sanction="${loan.sanction_date || ''}" data-cutoff="${loan.opening_balance_as_of || ''}" data-amount="${loan.disbursed_amount || loan.sanction_amount || 0}" data-installment="${loan.monthly_installment || 0}">
+          ${empCode} - ${empName} (${loanNo} - ${lotName}) - ${amount} টাকা${isCutover}
+        </option>
+      `;
+    });
+  } catch (err) {
+    console.error('Failed to load loans for interest calculation:', err);
+    showToast('ঋণের তালিকা লোড করা যায়নি।', 'error');
+  }
+}
+
+function onInterestCalcLoanChange() {
+  const select = document.getElementById('interestCalcLoanSelect');
+  if (!select || !select.value) {
+    document.getElementById('interestCalcReportContent').innerHTML = `
+      <div class="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-400">
+        <i data-lucide="calculator" class="w-12 h-12 mx-auto mb-3 text-gray-300"></i>
+        <p class="text-sm font-medium">প্রতিবেদন দেখতে উপরের ড্রপডাউন থেকে একটি ঋণ নির্বাচন করুন</p>
+      </div>
+    `;
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
+  const opt = select.selectedOptions[0];
+  const disbDate = opt.dataset.disbursement || opt.dataset.sanction || '';
+  const cutoffDate = opt.dataset.cutoff || new Date().toISOString().slice(0, 10);
+  const amount = parseFloat(opt.dataset.amount || 0);
+
+  const fromInput = document.getElementById('interestCalcFromDate');
+  const toInput = document.getElementById('interestCalcToDate');
+  const dedInput = document.getElementById('interestCalcMonthlyDeduction');
+  const countInput = document.getElementById('interestCalcInstallmentCount');
+
+  if (fromInput) fromInput.value = disbDate;
+  if (toInput) toInput.value = cutoffDate;
+
+  // Default installment = Amount / 120 (rounded)
+  const count = parseInt(countInput?.value || 120, 10);
+  const defaultInst = (count > 0 && amount > 0) ? Math.round(amount / count) : parseFloat(opt.dataset.installment || 0);
+  if (dedInput) dedInput.value = defaultInst > 0 ? defaultInst : '';
+
+  runInterestCalculationReport();
+}
+
+function onInterestCalcInstallmentCountChange() {
+  const select = document.getElementById('interestCalcLoanSelect');
+  const countInput = document.getElementById('interestCalcInstallmentCount');
+  const dedInput = document.getElementById('interestCalcMonthlyDeduction');
+
+  if (select && select.value && countInput && dedInput) {
+    const opt = select.selectedOptions[0];
+    const amount = parseFloat(opt.dataset.amount || 0);
+    const count = parseInt(countInput.value || 120, 10);
+    if (count > 0 && amount > 0) {
+      dedInput.value = Math.round(amount / count);
+    }
+  }
+  runInterestCalculationReport();
+}
+
+async function runInterestCalculationReport() {
+  const select = document.getElementById('interestCalcLoanSelect');
+  const loanId = select?.value;
+  const container = document.getElementById('interestCalcReportContent');
+  if (!loanId || !container) return;
+
+  const fromDate = document.getElementById('interestCalcFromDate')?.value || '';
+  const toDate = document.getElementById('interestCalcToDate')?.value || '';
+  const graceMonths = document.getElementById('interestCalcGraceMonths')?.value || '12';
+  const installmentCount = document.getElementById('interestCalcInstallmentCount')?.value || '120';
+  const customInstallment = document.getElementById('interestCalcMonthlyDeduction')?.value || '';
+
+  container.innerHTML = `
+    <div class="bg-white rounded-xl border border-gray-200 p-12 text-center text-gray-500">
+      <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-emerald-600 border-t-transparent mb-3"></div>
+      <p class="text-sm font-semibold text-gray-700">সুদ হিসাব প্রতিবেদন প্রস্তুত হচ্ছে...</p>
+    </div>
+  `;
+
+  try {
+    const query = new URLSearchParams({
+      loanId,
+      fromDate,
+      toDate,
+      graceMonths,
+      installmentCount,
+      customInstallment
+    });
+
+    const res = await API.get(`/reports/interest-calculation-report?${query.toString()}`);
+    if (!res.success) {
+      container.innerHTML = `
+        <div class="p-6 bg-red-50 border border-red-200 text-red-700 rounded-xl text-center text-sm">
+          ${res.message || 'প্রতিবেদন লোড করা যায়নি।'}
+        </div>
+      `;
+      return;
+    }
+
+    currentInterestCalcData = res;
+    renderInterestCalculationReportUI(res);
+  } catch (err) {
+    console.error('Interest calculation error:', err);
+    container.innerHTML = `
+      <div class="p-6 bg-red-50 border border-red-200 text-red-700 rounded-xl text-center text-sm">
+        হিসাব প্রক্রিয়াকরণ ব্যর্থ হয়েছে: ${err.message}
+      </div>
+    `;
+  }
+}
+
+function renderInterestCalculationReportUI(data) {
+  const container = document.getElementById('interestCalcReportContent');
+  if (!container) return;
+
+  const { loan, params, calculation, activeRules } = data;
+  const sched = calculation.schedule || [];
+
+  // Generate dynamic rate breakdown label for KPI card
+  const rateBreakdowns = calculation.rateBreakdown || [];
+  let rateBreakdownText = '';
+  if (rateBreakdowns.length > 0) {
+    rateBreakdownText = rateBreakdowns
+      .map(rb => `${parseFloat(rb.rate)}% (${rb.months} মাস)`)
+      .join(' + ');
+  } else {
+    rateBreakdownText = 'বিধি নির্ধারিত হার';
+  }
+
+  // Generate dynamic rules bullet list for explanatory banner
+  const rulesList = activeRules && activeRules.length > 0
+    ? activeRules.map(r => {
+        const toText = r.effective_to_date ? `${r.effective_to_date} পর্যন্ত` : 'চলমান';
+        return `${r.rule_name || ''} [${r.effective_from_date} হতে ${toText}]: বার্ষিক ${parseFloat(r.rate)}% সরল সুদ`;
+      }).join('; ')
+    : 'সেটিংস অনুযায়ী নির্ধারিত সুদের হার বিধি প্রয়োগ';
+
+  let html = `
+    <!-- Printable Header & Meta Banner -->
+    <div class="bg-white rounded-xl border border-gray-200 p-5 shadow-xs space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-gray-200 gap-2">
+        <div>
+          <span class="text-xs font-bold text-emerald-800 uppercase tracking-wider">গৃহ নির্মাণ ঋণ সুদ নিরূপণ বিবরণী</span>
+          <h3 class="text-xl font-black text-gray-900 mt-0.5">${loan.emp_name} (${loan.emp_code})</h3>
+          <p class="text-xs text-gray-500">${loan.designation || ''} • ${loan.department || ''}</p>
+        </div>
+        <div class="text-left sm:text-right text-xs text-gray-600 space-y-0.5">
+          <div>ঋণ নং: <strong class="font-mono text-gray-800">${loan.loan_no || ''}</strong> (${loan.loan_lot_name || ''})</div>
+          <div>মঞ্জুরি/বিতরণ: <strong class="font-mono">${loan.disbursement_date || loan.sanction_date || '—'}</strong></div>
+          <div>মূল বরাদ্দ আসল: <strong class="font-mono font-bold text-emerald-800">${formatBDT(loan.disbursed_amount || loan.sanction_amount)} টাকা</strong></div>
+        </div>
+      </div>
+
+      <!-- KPI Summary Cards -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs">
+          <span class="text-emerald-800 font-semibold block text-[11px]">হিসাবকাল (Period)</span>
+          <span class="font-mono font-black text-emerald-950 text-sm">${calculation.totalMonths} মাস</span>
+          <span class="block text-[10px] text-emerald-700 mt-0.5">${params.fromDate} হতে ${params.toDate}</span>
+        </div>
+        <div class="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs">
+          <span class="text-amber-800 font-semibold block text-[11px]">ধার্যকৃত মোট সুদ</span>
+          <span class="font-mono font-black text-amber-950 text-base">${formatBDT(calculation.cumulativeInterest)} টাকা</span>
+          <span class="block text-[10px] text-amber-800 mt-0.5 font-bold">${rateBreakdownText}</span>
+        </div>
+        <div class="p-3 bg-blue-50 rounded-xl border border-blue-200 text-xs">
+          <span class="text-blue-800 font-semibold block text-[11px]">পরিশোধিত আসল (সিমুলেশন)</span>
+          <span class="font-mono font-black text-blue-950 text-base">${formatBDT(calculation.cumulativePrincipalPaid)} টাকা</span>
+          <span class="block text-[10px] text-blue-700 mt-0.5">মাসিক কিস্তি: ${formatBDT(calculation.monthlyDeduction)} টাকা</span>
+        </div>
+        <div class="p-3 bg-purple-50 rounded-xl border border-purple-200 text-xs">
+          <span class="text-purple-800 font-semibold block text-[11px]">কাট-অফ তারিখে অবশিষ্ট আসল</span>
+          <span class="font-mono font-black text-purple-950 text-base">${formatBDT(calculation.remainingPrincipal)} টাকা</span>
+          <span class="block text-[10px] text-purple-700 mt-0.5">${calculation.remainingPrincipal === 0 ? 'সম্পূর্ণ আসল পরিশোধিত' : 'আংশিক আসল অবশিষ্ট'}</span>
+        </div>
+      </div>
+
+      <!-- Government Rule Explanatory Banner -->
+      <div class="p-3 bg-gray-50 rounded-lg border border-gray-200 text-[11px] text-gray-700 space-y-1">
+        <div class="font-bold flex items-center space-x-1.5 text-gray-800">
+          <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-700"></i>
+          <span>সুদ গণনা বিধি ও প্যারামিটার:</span>
+        </div>
+        <ul class="list-disc list-inside space-y-0.5 text-gray-600 pl-1">
+          <li><strong>গ্রেস পিরিয়ড:</strong> প্রথম ${params.graceMonths} মাস কোনো আসল কর্তন নেই, সম্পূর্ণ আসলের ওপর মাসিক সরল সুদ প্রবিশন।</li>
+          <li><strong>কিস্তি কর্তন:</strong> ${params.graceMonths + 1}তম মাস হতে মাসিক ${formatBDT(calculation.monthlyDeduction)} টাকা হারে আসল হ্রাসকরণ ও হ্রাসমান স্থিতির ওপর সুদ নিরূপণ।</li>
+          <li><strong>কার্যকর সুদের হার:</strong> ${rulesList}।</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Monthly Detailed Table -->
+    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-xs">
+      <div class="p-3.5 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+        <span class="font-bold text-xs text-gray-800">মাস-ওয়ারি হ্রাসমান আসল ও সরল সুদ হিসাব সূচি (Month-by-Month Schedule)</span>
+        <span class="text-[11px] font-mono font-semibold text-gray-500">মোট ${calculation.totalMonths} টি মাস</span>
+      </div>
+      <div class="overflow-x-auto max-h-[500px]">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead class="sticky top-0 bg-gray-100 border-b border-gray-200 text-gray-700 text-[11px]">
+            <tr>
+              <th class="p-2.5 text-center font-bold">ক্রম</th>
+              <th class="p-2.5 font-bold">হিসাব মাস</th>
+              <th class="p-2.5 text-center font-bold">অবস্থা</th>
+              <th class="p-2.5 text-center font-bold">সুদের হার</th>
+              <th class="p-2.5 text-right font-bold">প্রারম্ভিক আসল</th>
+              <th class="p-2.5 text-right font-bold">আসল কর্তন</th>
+              <th class="p-2.5 text-right font-bold">সমাপনী আসল</th>
+              <th class="p-2.5 text-right font-bold text-amber-900">মাসিক সুদ</th>
+              <th class="p-2.5 text-right font-bold text-amber-950">পুঞ্জীভূত সুদ</th>
+              <th class="p-2.5 text-right font-bold text-blue-900">পুঞ্জীভূত পরিশোধ</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 font-mono">
+  `;
+
+  sched.forEach((row, idx) => {
+    const isGrace = row.isGracePeriod;
+    const isFrac = row.isFractionalMonth;
+    const rowClass = isFrac ? 'bg-amber-100/40' : (isGrace ? 'bg-amber-50/30' : (idx % 2 === 1 ? 'bg-gray-50/50' : 'bg-white'));
+    
+    let badge = '';
+    if (isFrac) {
+      badge = `<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-200 text-amber-950 border border-amber-400" title="${row.periodRemarks}">${row.activeDays}/${row.daysInMonth} দিন (ভগ্নাংশ)</span>`;
+    } else if (isGrace) {
+      badge = '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">গ্রেস মাস</span>';
+    } else {
+      badge = '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">কিস্তি কর্তন</span>';
+    }
+
+    html += `
+      <tr class="${rowClass} hover:bg-emerald-50/50 transition">
+        <td class="p-2 text-center text-gray-500">${row.monthIndex}</td>
+        <td class="p-2 font-semibold text-gray-900 font-sans">
+          <div>${row.monthNameBn} <span class="text-[10px] text-gray-400 font-mono">(${row.monthKey})</span></div>
+          ${isFrac ? `<span class="text-[10px] text-amber-900 font-medium font-sans block mt-0.5">🗓️ ${row.periodRemarks}</span>` : ''}
+        </td>
+        <td class="p-2 text-center">${badge}</td>
+        <td class="p-2 text-center font-bold ${row.rate === 8.0 ? 'text-purple-700' : 'text-emerald-700'}">${row.rate}%</td>
+        <td class="p-2 text-right font-bold text-gray-800">${formatBDT(row.openingPrincipal)}</td>
+        <td class="p-2 text-right ${row.principalDeduction > 0 ? 'text-blue-700 font-bold' : 'text-gray-400'}">${formatBDT(row.principalDeduction)}</td>
+        <td class="p-2 text-right font-bold text-gray-900">${formatBDT(row.closingPrincipal)}</td>
+        <td class="p-2 text-right font-bold text-amber-800">${formatBDT(row.monthlyInterest)}</td>
+        <td class="p-2 text-right font-bold text-amber-950">${formatBDT(row.cumulativeInterest)}</td>
+        <td class="p-2 text-right text-blue-900">${formatBDT(row.cumulativePrincipalPaid)}</td>
+      </tr>
+    `;
+  });
+
+  html += `
+          </tbody>
+          <tfoot class="sticky bottom-0 bg-emerald-900 text-white font-mono text-xs font-bold border-t-2 border-emerald-950">
+            <tr>
+              <td colspan="4" class="p-2.5 text-center font-sans">সর্বমোট (${calculation.totalMonths} মাস):</td>
+              <td class="p-2.5 text-right">—</td>
+              <td class="p-2.5 text-right font-bold">${formatBDT(calculation.cumulativePrincipalPaid)}</td>
+              <td class="p-2.5 text-right font-bold">${formatBDT(calculation.remainingPrincipal)}</td>
+              <td class="p-2.5 text-right font-bold text-amber-200">${formatBDT(calculation.cumulativeInterest)}</td>
+              <td class="p-2.5 text-right font-bold text-amber-100">${formatBDT(calculation.cumulativeInterest)}</td>
+              <td class="p-2.5 text-right font-bold">${formatBDT(calculation.cumulativePrincipalPaid)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  `;
+
+  container.innerHTML = html;
+  if (window.lucide) lucide.createIcons();
+}
+
+function exportInterestCalcExcel() {
+  const select = document.getElementById('interestCalcLoanSelect');
+  const loanId = select?.value;
+  if (!loanId) {
+    showToast('অনুগ্রহ করে প্রথমে একটি ঋণ নির্বাচন করুন।', 'warning');
+    return;
+  }
+
+  const fromDate = document.getElementById('interestCalcFromDate')?.value || '';
+  const toDate = document.getElementById('interestCalcToDate')?.value || '';
+  const graceMonths = document.getElementById('interestCalcGraceMonths')?.value || '12';
+  const installmentCount = document.getElementById('interestCalcInstallmentCount')?.value || '120';
+  const customInstallment = document.getElementById('interestCalcMonthlyDeduction')?.value || '';
+  const token = API.getToken();
+
+  const query = new URLSearchParams({
+    reportType: 'interest_calculation_report',
+    loanId,
+    fromDate,
+    toDate,
+    graceMonths,
+    installmentCount,
+    customInstallment
+  });
+
+  if (token) query.append('token', token);
+
+  const url = `/api/reports/export/excel?${query.toString()}`;
+  window.open(url, '_blank');
+}
+
+function printInterestCalcReport() {
+  const select = document.getElementById('interestCalcLoanSelect');
+  if (!select || !select.value) {
+    showToast('প্রিন্ট করার জন্য একটি ঋণ নির্বাচন করুন।', 'warning');
+    return;
+  }
+
+  const printClass = 'print-interest-calc-report';
+  const cleanup = () => document.body.classList.remove(printClass);
+  window.addEventListener('afterprint', cleanup, { once: true });
+  document.body.classList.add(printClass);
+
+  try {
+    window.print();
+  } catch (err) {
+    cleanup();
+    window.removeEventListener('afterprint', cleanup);
+    console.error('Print error:', err);
+  }
+}
+
+// Software Benefits (Excel vs Software ERP) Modal & Print
+function openSoftwareBenefitsModal() {
+  const dateEl = document.getElementById('softwareBenefitsPrintDate');
+  if (dateEl) {
+    const today = new Date().toISOString().slice(0, 10);
+    dateEl.innerHTML = formatOfficeNoteDate(today, 'english');
+  }
+  openModal('softwareBenefitsModal');
+  if (window.lucide) lucide.createIcons();
+}
+
+function printSoftwareBenefits() {
+  const content = document.getElementById('softwareBenefitsPrintableArea');
+  if (!content) return;
+
+  let printFrame = document.getElementById('benefitsPrintFrame');
+  if (printFrame) printFrame.remove();
+
+  printFrame = document.createElement('iframe');
+  printFrame.id = 'benefitsPrintFrame';
+  printFrame.style.position = 'fixed';
+  printFrame.style.right = '0';
+  printFrame.style.bottom = '0';
+  printFrame.style.width = '0';
+  printFrame.style.height = '0';
+  printFrame.style.border = '0';
+  printFrame.style.visibility = 'hidden';
+  document.body.appendChild(printFrame);
+
+  const doc = printFrame.contentWindow.document;
+  doc.open();
+  doc.write(`
+    <!DOCTYPE html>
+    <html lang="bn">
+    <head>
+      <meta charset="UTF-8">
+      <title>গৃহ ঋণ সফটওয়্যার বনাম পূর্বের এক্সেল ফাইলের তুলনামূলক সুবিধাসমূহ</title>
+      <style>
+        @page {
+          size: A4 portrait;
+          margin: 12mm 15mm;
+        }
+        * {
+          box-sizing: border-box;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        body {
+          margin: 0;
+          padding: 0;
+          font-family: 'SolaimanLipi', 'Kalpurush', 'Nikosh', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          color: #111;
+          background: #fff;
+          font-size: 9.5pt;
+          line-height: 1.45;
+        }
+        .header {
+          text-align: center;
+          border-bottom: 2px double #333;
+          padding-bottom: 8px;
+          margin-bottom: 15px;
+        }
+        .header h1 {
+          font-size: 16pt;
+          margin: 0 0 2px 0;
+          color: #064e3b;
+        }
+        .header h2 {
+          font-size: 12pt;
+          margin: 0 0 4px 0;
+        }
+        .header p {
+          font-size: 9pt;
+          color: #555;
+          margin: 0;
+        }
+        .kpi-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 8px;
+          margin-bottom: 15px;
+        }
+        .kpi-card {
+          border: 1px solid #999;
+          padding: 6px 8px;
+          border-radius: 4px;
+          text-align: center;
+          background: #f8fafc;
+        }
+        .kpi-title {
+          font-weight: bold;
+          font-size: 9pt;
+          color: #065f46;
+          display: block;
+          margin-bottom: 2px;
+        }
+        .kpi-desc {
+          font-size: 8pt;
+          color: #444;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 15px;
+          font-size: 8.5pt;
+          page-break-inside: auto;
+        }
+        th, td {
+          border: 1px solid #555;
+          padding: 5px 6px;
+          vertical-align: top;
+        }
+        th {
+          background-color: #f1f5f9;
+          font-weight: bold;
+          text-align: left;
+        }
+        tr {
+          page-break-inside: avoid;
+        }
+        .excel-col {
+          background-color: #fef2f2 !important;
+          color: #450a0a;
+        }
+        .software-col {
+          background-color: #f0fdf4 !important;
+          color: #052e16;
+          font-weight: 500;
+        }
+        .conclusion {
+          background-color: #f8fafc;
+          border-left: 3px solid #065f46;
+          padding: 8px 10px;
+          font-size: 8.5pt;
+          margin-bottom: 20px;
+        }
+        .footer {
+          margin-top: 25px;
+          display: flex;
+          justify-content: space-between;
+          font-size: 8.5pt;
+          page-break-inside: avoid;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>গাজীপুর পল্লী বিদ্যুৎ সমিতি-২</h1>
+        <h2>কর্মকর্তা-কর্মচারী গৃহ ঋণ ব্যবস্থাপনা সফটওয়্যার (PBS House Loan ERP)</h2>
+        <p>পূর্বের সনাতন এক্সেল ফাইল বনাম বিশেষায়িত সফটওয়্যারের তুলনামূলক সুবিধাসমূহ</p>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <span class="kpi-title">১০০% নির্ভুল হিসাব</span>
+          <span class="kpi-desc">সরকারি বিধিমালা মোতাবেক স্বয়ংক্রিয় সরল সুদ ও দিনভিত্তিক হিসাব</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-title">এক ক্লিকে ব্যাংক চিঠি</span>
+          <span class="kpi-desc">সকল পবিসের ব্যাংক ট্রান্সফার ও ফরোয়ার্ডিং লেটার মুহূর্তে প্রস্তুত</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-title">অডিট লগ ও ব্যাকআপ</span>
+          <span class="kpi-desc">ব্যবহারকারী ট্র্যাকিং ও রিসাইকেল বিন হতে এক ক্লিকে রিস্টোর</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-title">অফলাইন প্রস্তুত</span>
+          <span class="kpi-desc">ইন্টারনেট ছাড়াও নিজস্ব সার্ভারে নিরাপদ, দ্রুত ও নির্ভরযোগ্য</span>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 25px; text-align: center;">ক্র:</th>
+            <th style="width: 125px;">মূল বৈশিষ্ট্য / ক্ষেত্র</th>
+            <th style="width: 42%;">পূর্বের সনাতন এক্সেল ফাইল (Legacy Excel)</th>
+            <th>বর্তমান বিশেষায়িত সফটওয়্যার (PBS Software)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">১</td>
+            <td><strong>সুদ গণনা ও বিধি প্রয়োগ (৮% / ৭%)</strong></td>
+            <td class="excel-col">ম্যানুয়াল ফর্মুলা প্রয়োগ করতে হতো। কোনো মাসে ফর্মুলা মুছে গেলে বা ভুল হলে হিসেবে বড় ধরনের অসঙ্গতি তৈরি হতো। মাসের মাঝখানে ঋণ নিলে দিনভিত্তিক ভগ্নাংশ সুদ বের করা কঠিন ছিল।</td>
+            <td class="software-col">সরকারি বিধি অনুযায়ী ২০১৯ পর্যন্ত ৮% এবং ২০২০ হতে ৭% স্বয়ংক্রিয়ভাবে কার্যকর হয়। প্রথম ও কাট-অফ মাসের দিনভিত্তিক ভগ্নাংশ সুদ (Day Fraction) সেকেন্ডে শতভাগ নির্ভুলভাবে গণনা করে।</td>
+          </tr>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">২</td>
+            <td><strong>ডাটা নিরাপত্তা ও ক্র্যাশ রিস্ক</strong></td>
+            <td class="excel-col">কম্পিউটার হ্যাং হওয়া, ফাইল করাপ্ট হওয়া বা ভুল ক্লিকের কারণে ফর্মুলা নষ্ট হয়ে যাওয়ার সর্বোচ্চ ঝুঁকি থাকত।</td>
+            <td class="software-col">SQLite ডাটাবেজে এন্ট্রিভিত্তিক সংরক্ষিত হয়। এক ক্লিকে সম্পূর্ণ ডাটাবেজ ব্যাকআপ ও এক্সেল এক্সপোর্টের সুবিধা রয়েছে।</td>
+          </tr>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">৩</td>
+            <td><strong>অন্য পবিস রেমিট্যান্স ও ব্যাংক চিঠি</strong></td>
+            <td class="excel-col">প্রতিটি পবিসের জন্য আলাদা আলাদা শিট কপি-পেস্ট করে ব্যাংকে পাঠানোর চিঠি ও ভাউচার ম্যানুয়ালি টাইপ করতে হতো, যাতে প্রচুর সময় অপচয় হতো।</td>
+            <td class="software-col">"এক ক্লিকে ব্যাংক অ্যাডভাইস" সুবিধা। স্বয়ংক্রিয়ভাবে পবিস অনুযায়ী গ্রুপ হয়ে লেটারহেড, ব্যাংক অ্যাকাউন্ট, রাউটিং নং ও কথায় টাকাসহ অফিসিয়াল ফরম্যাটে রেডিমেড তৈরি হয়।</td>
+          </tr>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">৪</td>
+            <td><strong>বদলিকৃত ঋণ ও তাগাদা পত্র</strong></td>
+            <td class="excel-col">কে কোন পবিসে বদলি হয়েছেন এবং কার কত কিস্তি বকেয়া তা এক্সেল থেকে খুঁজে বের করে চিঠি ড্রাফট করা চরম কষ্টসাধ্য ও দীর্ঘমেয়াদী কাজ ছিল।</td>
+            <td class="software-col">বদলিকৃতদের তালিকা রিয়েল-টাইমে পাওয়া যায়। পৃথক পবিস ও সকল পবিসের সমন্বিত তাগাদা পত্র বাংলা-ইংরেজি উভয় সন/তারিখ ও স্মারক নম্বরসহ স্বয়ংক্রিয়ভাবে তৈরি হয়।</td>
+          </tr>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">৫</td>
+            <td><strong>কর্মচারী ব্যক্তিগত লেজার</strong></td>
+            <td class="excel-col">কোনো কর্মচারী তাঁর ঋণের স্থিতি বা সুদের হিসাব জানতে চাইলে এক্সেল ঘেঁটে প্রিন্ট তৈরি করা কঠিন ছিল।</td>
+            <td class="software-col">কর্মচারীর পে-আইডি লিখলেই তাঁর লটভিত্তিক সকল ঋণের বিতরণ, আসল কর্তন, সুদ প্রবিশন ও সমাপনী স্থিতির প্রমিত ব্যক্তিগত লেজার চোখের পলকে দৃশ্যমান ও প্রিন্টযোগ্য।</td>
+          </tr>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">৬</td>
+            <td><strong>অডিট ট্রেইল ও রিস্টোর</strong></td>
+            <td class="excel-col">এক্সেলে কে কখন কী পরিবর্তন করেছে তা জানার উপায় নেই। ভুলবশত কোনো সেল ডিলিট হলে ফিরে পাওয়ার সুযোগ ছিল না।</td>
+            <td class="software-col">পূর্ণাঙ্গ অডিট লগ সিস্টেম বিদ্যমান। ভুলবশত কিছু ডিলিট হলেও "রিসাইকেল বিন" থেকে এক ক্লিকেই পূর্বের আর্থিক ব্যালেন্সসহ অবিকল রিস্টোর করা যায়।</td>
+          </tr>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">৭</td>
+            <td><strong>কন্ট্রোল শিট (GL 143.20 & 242.50)</strong></td>
+            <td class="excel-col">বার্ষিক আর্থিক হিসাব চূড়ান্তকরণের সময় জেনারেল লেজারের সাথে সাবসিডিয়ারি লেজার মেলাতে দীর্ঘ সময় ও হিসাবের গড়মিল হতো।</td>
+            <td class="software-col">১৪৩.২০ ও ২৪২.৫০ অ্যাকাউন্টস কোডের কন্ট্রোল শিট এবং অর্থবছরভিত্তিক তুলনামূলক রিপোর্ট প্রস্তুত থাকে, যা ব্যালেন্স শিটের সাথে সাথে মিলে যায়।</td>
+          </tr>
+          <tr>
+            <td style="text-align: center; font-weight: bold;">৮</td>
+            <td><strong>ব্যবহারের সুবিধা</strong></td>
+            <td class="excel-col">জটিল এক্সেল ফর্মুলা জানার প্রয়োজন হতো, অনভিজ্ঞ কেউ ফাইল খুললে ভুল হওয়ার আশঙ্কা বেশি ছিল।</td>
+            <td class="software-col">সম্পূর্ণ বাংলা ভাষায় আধুনিক, সহজবোধ্য ওয়েব ড্যাশবোর্ড; ড্রপডাউন, কি-বোর্ড শর্টকাট (Ctrl+K) ও মোবাইল/ট্যাবলেট ফ্রেন্ডলি ইন্টারফেস।</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="conclusion">
+        <strong>উপসংহার:</strong> এই সফটওয়্যার ব্যবহারের ফলে হিসাব বিভাগে সময় ও কায়িক শ্রম ৯০% হ্রাস পাবে, ম্যানুয়াল ভুলের ঝুঁকি শূন্যের কোঠায় নেমে আসবে এবং বাপবিবোর্ডের নিরীক্ষা ও আর্থিক নিয়মাবলীর শতভাগ স্বচ্ছতা নিশ্চিত হবে।
+      </div>
+
+      <div class="footer">
+        <div>
+          <span>প্রস্তুত ও পরিকল্পনায়:</span><br>
+          <strong>মোঃ আরিফুল ইসলাম</strong><br>
+          <span>সহকারী জেনারেল ম্যানেজার (অর্থ-হিসাব)</span><br>
+          <span>গাজীপুর পল্লী বিদ্যুৎ সমিতি-২</span>
+        </div>
+        <div style="text-align: right;">
+          <span>প্রিন্ট তারিখ: <strong>${formatOfficeNoteDate(new Date().toISOString().slice(0, 10), 'english')}</strong></span>
+        </div>
+      </div>
+    </body>
+    </html>
+  `);
+  doc.close();
+
+  setTimeout(() => {
+    printFrame.contentWindow.focus();
+    printFrame.contentWindow.print();
+  }, 250);
+}
+
+// Window exposures
+window.openSoftwareBenefitsModal = openSoftwareBenefitsModal;
+window.printSoftwareBenefits = printSoftwareBenefits;
+window.loadInterestCalcTab = loadInterestCalcTab;
+window.onInterestCalcLoanChange = onInterestCalcLoanChange;
+window.onInterestCalcInstallmentCountChange = onInterestCalcInstallmentCountChange;
+window.runInterestCalculationReport = runInterestCalculationReport;
+window.exportInterestCalcExcel = exportInterestCalcExcel;
+window.printInterestCalcReport = printInterestCalcReport;
+

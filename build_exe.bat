@@ -2,7 +2,7 @@
 chcp 65001 >nul
 TITLE PBS House Loan Management System - Exe Builder
 echo ====================================================================
-echo  পবিস কর্মকর্তা-কর্মচারী গৃহ ঋণ ব্যবস্থাপনা সিস্টেম
+echo   PBS House Loan Management System
 echo  Creating Standalone Offline Single Executable (.exe)
 echo ====================================================================
 echo.

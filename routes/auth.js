@@ -36,7 +36,8 @@ router.post('/login', (req, res) => {
         username: user.username,
         role: user.role,
         fullName: user.full_name || user.emp_name,
-        employeeId: user.employee_id
+        employeeId: user.employee_id,
+        isMasterAdmin: Boolean(user.is_master_admin)
       },
       JWT_SECRET,
       { expiresIn: '24h' }
@@ -54,7 +55,8 @@ router.post('/login', (req, res) => {
         fullName: user.full_name || user.emp_name,
         designation: user.emp_designation || (user.role === 'admin' ? 'সিস্টেম অ্যাডমিনিস্ট্রেটর' : 'হিসাব কর্মকর্তা'),
         employeeId: user.employee_id,
-        empCode: user.emp_code
+        empCode: user.emp_code,
+        isMasterAdmin: Boolean(user.is_master_admin)
       }
     });
   } catch (error) {
@@ -67,6 +69,7 @@ router.post('/login', (req, res) => {
 router.get('/me', authenticateToken, (req, res) => {
   const user = db.prepare(`
     SELECT u.id, u.username, u.role, u.full_name, u.employee_id,
+           u.is_master_admin AS isMasterAdmin,
            e.emp_code, e.name as emp_name, e.designation as emp_designation, e.department
     FROM users u
     LEFT JOIN employees e ON u.employee_id = e.id

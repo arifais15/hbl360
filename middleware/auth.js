@@ -74,8 +74,26 @@ function requireRole(allowedRoles) {
   };
 }
 
+function requireMasterAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ success: false, message: 'অননুমোদিত অ্যাক্সেস।' });
+  }
+
+  const user = db.prepare(`
+    SELECT is_master_admin
+    FROM users
+    WHERE id = ? AND is_active = 1 AND is_deleted = 0
+  `).get(req.user.id);
+
+  if (!user || !user.is_master_admin) {
+    return res.status(403).json({ success: false, message: 'এই পরিবর্তনের জন্য মাস্টার অ্যাডমিন অনুমতি প্রয়োজন।' });
+  }
+  next();
+}
+
 module.exports = {
   JWT_SECRET,
   authenticateToken,
-  requireRole
+  requireRole,
+  requireMasterAdmin
 };

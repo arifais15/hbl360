@@ -2,16 +2,75 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
-:root {
-  --primary-color: #047857; /* Emerald green theme standard for PBS */
-  --primary-dark: #065f46;
-  --primary-light: #10b981;
+@font-face {
+  font-family: 'Nikosh';
+  src: url('/fonts/Nikosh.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
 }
 
-body {
-  font-family: 'Hind Siliguri', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+:root {
+  --primary-color: #047857;
+  --primary-dark: #065f46;
+  --page-background: #f1f5f9;
+  --text-primary: #0f172a;
+  --text-muted: #475569;
+  --border-color: #cbd5e1;
+}
+
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+  width: 100%;
+  font-family: 'Nikosh', 'Hind Siliguri', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background-color: #f3f4f6;
   color: #1f2937;
+}
+
+#topNavbar {
+  width: 100%;
+  max-width: 100vw;
+  box-sizing: border-box;
+}
+
+#appContainer {
+  width: 100%;
+  max-width: 100vw;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+#authenticatedWorkspace {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+#mainContent {
+  flex: 1 1 0%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.tab-pane {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* Remove numeric input spinners (up/down arrows) across all browsers */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none !important;
+  margin: 0 !important;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield !important;
+  appearance: textfield !important;
 }
 
 /* Custom scrollbars */
@@ -57,8 +116,9 @@ body {
 #sidebar {
   height: calc(100vh - 5rem);
   max-height: calc(100vh - 5rem);
-  border-color: #e5e7eb;
-  box-shadow: 0 8px 24px rgb(15 23 42 / 5%);
+  border-color: #dbe5e2;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdfc 100%);
+  box-shadow: 0 12px 30px rgb(15 23 42 / 7%);
 }
 
 #sidebarNavScroll {
@@ -67,48 +127,216 @@ body {
 }
 
 .sidebar-heading {
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e8eeeb;
+  padding-bottom: 0.8rem;
+}
+
+.sidebar-heading > div > span:first-child {
+  color: #047857;
+  letter-spacing: 0.12em;
+}
+
+.sidebar-heading > div > span:last-child {
+  color: #172b26;
 }
 
 .sidebar-section-label {
-  padding: 0.8rem 0.75rem 0.3rem;
-  color: #6b7280;
-  font-size: 0.64rem;
+  margin: 0.55rem 0.25rem 0.2rem;
+  padding: 0.45rem 0.5rem 0.3rem;
+  border-left: 2px solid #a7d8c4;
+  color: #64746e;
+  font-size: 0.66rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.02em;
   line-height: 1.25;
 }
 
 #sidebar .nav-tab {
-  min-height: 2.65rem;
-  padding: 0.65rem 0.75rem;
+  min-height: 2.2rem;
+  padding: 0.45rem 0.5rem;
   border: 1px solid transparent;
-  color: #374151;
+  border-radius: 0.7rem;
+  color: #34443e;
   font-weight: 500;
+  font-size: 0.8rem;
+  line-height: 1.35;
   text-align: left;
-  transition: background-color 0.16s ease, color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+  transition: background-color 0.16s ease, color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+#sidebar .nav-tab svg {
+  flex: 0 0 auto;
+  color: #71817b;
 }
 
 #sidebar .nav-tab.active {
   border-color: #047857;
   color: #ffffff;
   font-weight: 700;
+  box-shadow: 0 5px 12px rgb(6 95 70 / 17%);
+}
+
+#sidebar .nav-tab.active svg {
+  color: #d1fae5;
 }
 
 #sidebar .nav-tab:not(.active):hover {
   border-color: #a7f3d0;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 4%);
 }
 
 .sidebar-footer {
   flex-shrink: 0;
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid #e5ece8;
+  display: grid;
+  gap: 0.55rem;
 }
 
 .sidebar-status-dot {
-  width: 0.5rem;
-  height: 0.5rem;
+  width: 0.48rem;
+  height: 0.48rem;
   border-radius: 9999px;
   background: #10b981;
   box-shadow: 0 0 0 3px #d1fae5;
+  flex: 0 0 auto;
+}
+
+.sidebar-system-status {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.1rem 0.2rem;
+  color: #166534;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.sidebar-db-card,
+.sidebar-developer-card,
+.login-developer-card {
+  border: 1px solid #e2eae6;
+  border-radius: 0.75rem;
+  background: #f8fbf9;
+}
+
+.sidebar-db-card {
+  padding: 0.55rem 0.65rem;
+}
+
+.sidebar-db-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+  color: #52645d;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.sidebar-db-label svg {
+  width: 0.8rem;
+  height: 0.8rem;
+  color: #047857;
+}
+
+#sidebarDbLocation {
+  margin: 0;
+  padding: 0.45rem;
+  border: 1px solid #e4ebe7;
+  border-radius: 0.45rem;
+  background: #ffffff;
+  color: #52615b;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.61rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.sidebar-developer-card,
+.login-developer-card {
+  display: flex;
+  align-items: center;
+  padding: 0.65rem;
+}
+
+.sidebar-developer-card,
+.login-developer-card {
+  border: 1px solid #e2eae6;
+  border-radius: 0.75rem;
+  background: #f8fbf9;
+}
+
+.sidebar-developer-card {
+  background: linear-gradient(135deg, #f3faf6 0%, #f8fbf9 100%);
+}
+
+.sidebar-developer-card {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.developer-credit-line {
+  margin: 0;
+  color: #34443e;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.sidebar-developer-card .developer-credit-line {
+  font-size: 0.52rem;
+}
+
+.developer-avatar {
+  width: 2.3rem;
+  height: 2.3rem;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid #bbdfce;
+  border-radius: 0.7rem;
+  background: #e4f4eb;
+  color: #065f46;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.developer-details {
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.developer-label {
+  margin-bottom: 0.12rem;
+  color: #64746e;
+  font-size: 0.59rem;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+}
+
+.developer-name {
+  color: #172b26;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.developer-role,
+.developer-organization {
+  color: #52645d;
+  font-size: 0.64rem;
+}
+
+#loginDeveloperCredit {
+  border-top: 1px solid #e8eeeb;
+}
+
+#loginDeveloperCredit .login-developer-card {
+  padding: 0.8rem 0.9rem;
+  justify-content: center;
 }
 
 .table-header {
@@ -116,27 +344,31 @@ body {
   border-bottom: 2px solid #e2e8f0;
 }
 
-.ledger-subtab {
+.ledger-subtab,
+.deductions-subtab {
   border: 1px solid #d1d5db;
   border-radius: 0.6rem 0.6rem 0.25rem 0.25rem;
   background: linear-gradient(180deg, #ffffff 0%, #f3f4f6 100%);
   color: #4b5563;
 }
 
-.ledger-subtab:hover:not(.is-active) {
+.ledger-subtab:hover:not(.is-active),
+.deductions-subtab:hover:not(.is-active) {
   border-color: #6ee7b7;
   background: #ecfdf5;
   color: #065f46;
 }
 
-.ledger-subtab.is-active {
+.ledger-subtab.is-active,
+.deductions-subtab.is-active {
   border-color: #047857;
   background: linear-gradient(135deg, #065f46 0%, #059669 100%);
   color: #ffffff;
   box-shadow: 0 3px 8px rgb(6 95 70 / 18%);
 }
 
-.ledger-subtab.is-active svg {
+.ledger-subtab.is-active svg,
+.deductions-subtab.is-active svg {
   color: #d1fae5;
 }
 
@@ -150,6 +382,216 @@ body {
 
 #gl14320PaperSheet .gl14320-ledger-table tbody tr.gl14320-opening-row {
   background-color: #dbeafe;
+}
+
+/* High Contrast & Crisp Typography Overrides */
+body {
+  font-family: 'Nikosh', 'Hind Siliguri', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: var(--page-background);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#loginCard {
+  min-height: 0;
+  border-top: 4px solid #047857;
+}
+
+#loginScreen {
+  max-width: 30rem;
+}
+
+#ownPbsSettingsForm :is(input, select, textarea):disabled {
+  background-color: #f3f6f4;
+  color: #46534b;
+  cursor: not-allowed;
+}
+
+#ownPbsSettingsForm button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.25);
+  opacity: 0.65;
+}
+
+#interPbsCollectionDialog {
+  width: min(92vw, 80rem);
+  max-width: 80rem;
+}
+
+#newLoanDialog {
+  width: min(92vw, 80rem);
+  max-width: 80rem;
+  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
+  margin: 1rem auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#newLoanForm {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.35rem;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+#loanFormActions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  flex-shrink: 0;
+  padding-bottom: 0.25rem;
+  background: #ffffff;
+}
+
+@media (max-width: 640px) {
+  #interPbsCollectionDialog {
+    width: calc(100vw - 2rem);
+    padding: 1rem;
+  }
+
+  #newLoanDialog {
+    width: calc(100vw - 2rem);
+    padding: 1rem;
+  }
+
+  #newLoanForm {
+    padding-right: 0;
+  }
+}
+
+/* Global Text Contrast Enhancements: elevate faint gray text to dark readable tones */
+.text-gray-400 {
+  color: #475569 !important; /* slate-600 */
+}
+
+.text-gray-500 {
+  color: #334155 !important; /* slate-700 */
+}
+
+.text-gray-600 {
+  color: #1e293b !important; /* slate-800 */
+}
+
+.text-gray-700 {
+  color: #0f172a !important; /* slate-900 */
+}
+
+/* Input Placeholders & Form Controls */
+input::placeholder,
+textarea::placeholder,
+select::placeholder {
+  color: var(--text-muted) !important;
+  opacity: 1 !important;
+}
+
+input, select, textarea {
+  color: var(--text-primary) !important;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+select,
+textarea {
+  border-color: var(--border-color);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--primary-color);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled,
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--primary-color);
+}
+
+#topNavbar #globalSpotlightInput {
+  color: #ffffff !important;
+}
+
+#topNavbar #globalSpotlightInput:focus {
+  color: var(--text-primary) !important;
+}
+
+#topNavbar #globalSpotlightInput::placeholder {
+  color: #d1fae5 !important;
+}
+
+#topNavbar #globalSpotlightInput:focus::placeholder {
+  color: var(--text-muted) !important;
+}
+
+:focus-visible {
+  outline: 3px solid #059669;
+  outline-offset: 2px;
+}
+
+#topNavbar :focus-visible {
+  outline-color: #d1fae5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Excel Style Grid Table (Narrow compact rows, thin cell borders & alternating zebra colors) */
+.excel-grid-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.8125rem; /* ~13px */
+  border: 1px solid #94a3b8;
+  color: #0f172a;
+}
+
+.excel-grid-table th {
+  background-color: #e2e8f0;
+  color: #0f172a !important;
+  font-weight: 800 !important;
+  font-size: 0.775rem;
+  letter-spacing: 0.02em;
+  padding: 6px 10px !important;
+  border: 1px solid #94a3b8 !important;
+  white-space: nowrap;
+}
+
+.excel-grid-table td {
+  padding: 5px 10px !important;
+  line-height: 1.3 !important;
+  border: 1px solid #cbd5e1 !important;
+  vertical-align: middle;
+  color: #0f172a;
+}
+
+.excel-grid-table tbody tr:nth-child(even) {
+  background-color: #f8fafc;
+}
+
+.excel-grid-table tbody tr:nth-child(odd) {
+  background-color: #ffffff;
+}
+
+.excel-grid-table tbody tr:hover {
+  background-color: #ecfdf5 !important; /* crisp soft emerald highlight on hover */
 }
 
 /* Sidebar Toggle Animation & States */
@@ -170,46 +612,50 @@ body {
   display: none !important;
 }
 
-/* Badge styles */
+/* Badge styles with high-contrast text */
 .badge-own {
   background-color: #dcfce7;
-  color: #166534;
-  border: 1px solid #bbf7d0;
+  color: #14532d;
+  font-weight: 700;
+  border: 1px solid #86efac;
 }
 
 .badge-other {
   background-color: #fef3c7;
-  color: #92400e;
-  border: 1px solid #fde68a;
+  color: #78350f;
+  font-weight: 700;
+  border: 1px solid #fcd34d;
 }
 
 .badge-active {
   background-color: #dbeafe;
-  color: #1e40af;
-  border: 1px solid #bfdbfe;
+  color: #1e3a8a;
+  font-weight: 700;
+  border: 1px solid #93c5fd;
 }
 
 .badge-closed {
-  background-color: #f1f5f9;
-  color: #475569;
-  border: 1px solid #e2e8f0;
+  background-color: #e2e8f0;
+  color: #1e293b;
+  font-weight: 700;
+  border: 1px solid #cbd5e1;
 }
 
 #tab-transferred_loans .text-gray-400 {
-  color: #4b5563 !important;
+  color: #475569 !important;
 }
 
 #tab-transferred_loans .text-gray-500,
 #tab-transferred_loans .text-gray-600 {
-  color: #374151 !important;
+  color: #1e293b !important;
 }
 
 #tab-transferred_loans .text-gray-700 {
-  color: #1f2937 !important;
+  color: #0f172a !important;
 }
 
 #tab-transferred_loans #transferredSearchInput::placeholder {
-  color: #4b5563;
+  color: #64748b;
   opacity: 1;
 }
 
@@ -442,6 +888,10 @@ body {
     display: table-header-group;
   }
 
+  body.print-employee-loan-ledger .employee-loan-table tfoot {
+    display: table-row-group !important;
+  }
+
   body.print-employee-loan-ledger .employee-loan-table th,
   body.print-employee-loan-ledger .employee-loan-table td {
     padding: 3pt 4pt !important;
@@ -475,5 +925,168 @@ body {
 
   body.print-employee-loan-ledger #empLoanLedgerContent > div:last-child {
     break-inside: avoid;
+  }
+
+  /* ===== USER MANUAL PRINT ===== */
+  body.print-user-manual #topNavbar,
+  body.print-user-manual #loginScreen,
+  body.print-user-manual #sidebar,
+  body.print-user-manual #toastContainer,
+  body.print-user-manual .no-print,
+  body.print-user-manual button {
+    display: none !important;
+  }
+
+  body.print-user-manual #appContainer,
+  body.print-user-manual #authenticatedWorkspace,
+  body.print-user-manual #mainContent {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  body.print-user-manual #mainContent > .tab-pane {
+    display: none !important;
+  }
+
+  body.print-user-manual #mainContent > #tab-user_manual {
+    display: block !important;
+  }
+
+  body.print-user-manual #tab-user_manual {
+    overflow: visible !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body.print-user-manual .manual-developer-credit {
+    display: flex !important;
+    margin-top: 8px !important;
+    padding-top: 6px !important;
+    border-top: 1px solid #d1d5db !important;
+    font-size: 9pt !important;
+    color: #6b7280 !important;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 12mm 14mm;
+  }
+
+  /* ===== INTEREST CALCULATION REPORT PRINT ===== */
+  body.print-interest-calc-report {
+    font-size: 8pt !important;
+    background: #ffffff !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+  }
+
+  body.print-interest-calc-report #topNavbar,
+  body.print-interest-calc-report #loginScreen,
+  body.print-interest-calc-report #sidebar,
+  body.print-interest-calc-report #toastContainer,
+  body.print-interest-calc-report #appFooter,
+  body.print-interest-calc-report .no-print,
+  body.print-interest-calc-report button {
+    display: none !important;
+  }
+
+  body.print-interest-calc-report #appContainer,
+  body.print-interest-calc-report #authenticatedWorkspace,
+  body.print-interest-calc-report #mainContent,
+  body.print-interest-calc-report #tab-interest_calc,
+  body.print-interest-calc-report #interestCalcReportContent,
+  body.print-interest-calc-report #interestCalcReportContent * {
+    max-height: none !important;
+  }
+
+  body.print-interest-calc-report #appContainer,
+  body.print-interest-calc-report #authenticatedWorkspace,
+  body.print-interest-calc-report #mainContent,
+  body.print-interest-calc-report #tab-interest_calc,
+  body.print-interest-calc-report #interestCalcReportContent {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+
+  body.print-interest-calc-report #mainContent > .tab-pane {
+    display: none !important;
+  }
+
+  body.print-interest-calc-report #mainContent > #tab-interest_calc {
+    display: block !important;
+  }
+
+  body.print-interest-calc-report #interestCalcReportContent div,
+  body.print-interest-calc-report #interestCalcReportContent .overflow-hidden,
+  body.print-interest-calc-report #interestCalcReportContent .overflow-x-auto,
+  body.print-interest-calc-report #interestCalcReportContent .max-h-\[500px\] {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    box-shadow: none !important;
+  }
+
+  body.print-interest-calc-report #interestCalcReportContent thead,
+  body.print-interest-calc-report #interestCalcReportContent thead.sticky {
+    position: static !important;
+    display: table-header-group !important;
+  }
+
+  body.print-interest-calc-report #interestCalcReportContent tfoot,
+  body.print-interest-calc-report #interestCalcReportContent tfoot.sticky {
+    position: static !important;
+    display: table-row-group !important;
+  }
+
+  body.print-interest-calc-report #interestCalcReportContent table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+    font-size: 8pt !important;
+  }
+
+  body.print-interest-calc-report #interestCalcReportContent tbody {
+    display: table-row-group !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+  }
+
+  body.print-interest-calc-report #interestCalcReportContent tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  body.print-interest-calc-report #interestCalcReportContent th,
+  body.print-interest-calc-report #interestCalcReportContent td {
+    border: 1px solid #9ca3af !important;
+    padding: 4px 6px !important;
+    font-size: 8pt !important;
+  }
+
+  body.print-interest-calc-report #interestCalcReportContent tfoot td {
+    background-color: #064e3b !important;
+    color: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }

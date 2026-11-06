@@ -13,24 +13,7 @@ const {
   readWorkbookRows,
   uploadWorkbook
 } = require('../services/excelImportService');
-
-const loanImportFields = [
-  { key: 'employee_code', required: true, description: 'কর্মচারীর পে আইডি / কোড; কর্মচারী তালিকায় থাকতে হবে।' },
-  { key: 'loan_no', required: true, description: 'ঋণের অনন্য হিসাব নম্বর।' },
-  { key: 'loan_lot_name', required: false, description: 'ঋণের লট; ফাঁকা থাকলে ১ম ঋণ হবে।' },
-  { key: 'loan_source_type', required: false, description: 'OWN_PBS অথবা OTHER_PBS; ফাঁকা থাকলে OWN_PBS হবে।' },
-  { key: 'origin_pbs_name', required: false, description: 'OTHER_PBS হলে উৎস পবিসের নাম আবশ্যক।' },
-  { key: 'sanction_no', required: false, description: 'মঞ্জুরি নম্বর; OTHER_PBS হলে ঐচ্ছিক।' },
-  { key: 'sanction_date', required: false, description: 'মঞ্জুরির তারিখ; YYYY-MM-DD। OTHER_PBS হলে ঐচ্ছিক।' },
-  { key: 'disbursement_date', required: false, description: 'ঋণ বিতরণের তারিখ; YYYY-MM-DD। OTHER_PBS হলে ঐচ্ছিক।' },
-  { key: 'sanction_amount', required: true, description: 'মঞ্জুরিকৃত ঋণের পরিমাণ।' },
-  { key: 'disbursed_amount', required: true, description: 'মোট বিতরণকৃত ঋণের পরিমাণ।' },
-  { key: 'opening_principal_balance', required: true, description: 'Opening balance date-এ অবশিষ্ট আসল।' },
-  { key: 'opening_interest_balance', required: true, description: 'Opening balance date-এ অবশিষ্ট সুদ; না থাকলে 0 দিন।' },
-  { key: 'monthly_installment', required: true, description: 'মাসিক কিস্তির পরিমাণ।' },
-  { key: 'opening_balance_date', required: true, description: 'বর্তমান আসল/সুদের ব্যালেন্স যে তারিখ পর্যন্ত হিসাব করা; YYYY-MM-DD।' },
-  { key: 'remarks', required: false, description: 'ঐচ্ছিক মন্তব্য।' }
-];
+const { loanImportFields, loanTemplateOptions } = require('../services/importTemplateDefinitions');
 
 function isValidIsoDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -51,8 +34,11 @@ router.get('/my-loans', authenticateToken, (req, res) => {
     }
 
     const loans = db.prepare(`
-      SELECT l.*, e.name as emp_name, e.emp_code, e.designation,
-             p.short_name as other_pbs_short
+      SELECT l.*, e.name as emp_name, e.emp_code, e.designation, e.current_posting_pbs,
+             p.short_name as other_pbs_short,
+             (SELECT COUNT(*) FROM repayments r WHERE r.loan_id = l.id AND r.is_deleted = 0) as repayments_count,
+             (SELECT MIN(r.deduction_month) FROM repayments r WHERE r.loan_id = l.id AND r.is_deleted = 0) as first_deduction_month,
+             (SELECT MAX(r.deduction_month) FROM repayments r WHERE r.loan_id = l.id AND r.is_deleted = 0) as last_deduction_month
       FROM loans l
       JOIN employees e ON l.employee_id = e.id
       LEFT JOIN other_pbs p ON l.origin_pbs_id = p.id
@@ -90,8 +76,11 @@ router.get('/', authenticateToken, (req, res) => {
     const { sourceType, status, employeeId, search } = req.query;
 
     let query = `
-      SELECT l.*, e.emp_code, e.name as emp_name, e.designation, e.department,
-             p.short_name as other_pbs_short
+      SELECT l.*, e.emp_code, e.name as emp_name, e.designation, e.department, e.current_posting_pbs,
+             p.short_name as other_pbs_short,
+             (SELECT COUNT(*) FROM repayments r WHERE r.loan_id = l.id AND r.is_deleted = 0) as repayments_count,
+             (SELECT MIN(r.deduction_month) FROM repayments r WHERE r.loan_id = l.id AND r.is_deleted = 0) as first_deduction_month,
+             (SELECT MAX(r.deduction_month) FROM repayments r WHERE r.loan_id = l.id AND r.is_deleted = 0) as last_deduction_month
       FROM loans l
       JOIN employees e ON l.employee_id = e.id
       LEFT JOIN other_pbs p ON l.origin_pbs_id = p.id
@@ -141,7 +130,7 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 router.get('/import-template', authenticateToken, requireRole(['admin', 'accounts']), (req, res) => {
-  downloadTemplate(res, 'loan_opening_balance_import_template.xlsx', loanImportFields);
+  return downloadTemplate(res, loanTemplateOptions.filename, loanImportFields, loanTemplateOptions);
 });
 
 router.post('/import', authenticateToken, requireRole(['admin', 'accounts']), uploadWorkbook, (req, res) => {
@@ -281,8 +270,8 @@ router.post('/import', authenticateToken, requireRole(['admin', 'accounts']), up
             sanction_no, sanction_date, disbursement_date, sanction_amount, disbursed_amount,
             monthly_installment, interest_rate, is_interest_applicable, principal_balance,
             interest_balance, total_principal_paid, total_interest_paid, status, remarks,
-            opening_balance_as_of
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ACTIVE', ?, ?)
+            opening_balance_as_of, opening_principal_balance, opening_interest_balance
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ACTIVE', ?, ?, ?, ?)
         `).run(
           loan.loan_no,
           loan.employee_id,
@@ -302,7 +291,9 @@ router.post('/import', authenticateToken, requireRole(['admin', 'accounts']), up
           loan.interest_balance,
           Math.max(0, loan.disbursed_amount - loan.principal_balance),
           loan.remarks,
-          loan.opening_balance_date
+          loan.opening_balance_date,
+          loan.principal_balance,
+          loan.interest_balance
         );
         logAudit(req, 'CREATE', 'LOAN', result.lastInsertRowid, `Excel থেকে opening balance সহ ঋণ আমদানি: ${loan.loan_no}`);
       }
@@ -326,8 +317,11 @@ router.get('/:id', authenticateToken, (req, res) => {
   try {
     const loanId = req.params.id;
     const loan = db.prepare(`
-      SELECT l.*, e.emp_code, e.name as emp_name, e.designation, e.department, e.mobile,
-             p.pbs_name as other_pbs_full_name, p.bank_name as other_bank_name, p.account_no as other_account_no
+      SELECT l.*, e.emp_code, e.name as emp_name, e.designation, e.department, e.mobile, e.current_posting_pbs,
+             p.pbs_name as other_pbs_full_name, p.bank_name as other_bank_name, p.account_no as other_account_no,
+             (SELECT COUNT(*) FROM repayments r WHERE r.loan_id = l.id AND r.is_deleted = 0) as repayments_count,
+             (SELECT MIN(r.deduction_month) FROM repayments r WHERE r.loan_id = l.id AND r.is_deleted = 0) as first_deduction_month,
+             (SELECT MAX(r.deduction_month) FROM repayments r WHERE r.loan_id = l.id AND r.is_deleted = 0) as last_deduction_month
       FROM loans l
       JOIN employees e ON l.employee_id = e.id
       LEFT JOIN other_pbs p ON l.origin_pbs_id = p.id
@@ -382,6 +376,10 @@ router.post('/', authenticateToken, requireRole(['admin', 'accounts']), (req, re
       monthly_installment,
       custom_interest_rate,
       initial_interest_balance,
+      has_opening_balance,
+      opening_principal_balance,
+      opening_interest_balance,
+      opening_balance_as_of,
       remarks
     } = req.body;
 
@@ -436,22 +434,39 @@ router.post('/', authenticateToken, requireRole(['admin', 'accounts']), (req, re
       if (ownSettings) finalOriginPbsName = ownSettings.pbs_name;
     }
 
-    const principalBalance = parseFloat(disbursed_amount);
-    const interestBalance = parseFloat(initial_interest_balance || 0);
+    const parsedDisbursed = parseFloat(disbursed_amount);
+    let principalBalance = parsedDisbursed;
+    let interestBalance = parseFloat(initial_interest_balance || 0);
+    let totalPrincipalPaid = 0.0;
+    let openingPrincipal = null;
+    let openingInterest = null;
+    let openingAsOfDate = null;
+
+    const isCutoverLoan = has_opening_balance || (opening_principal_balance !== undefined && opening_principal_balance !== null && opening_principal_balance !== '');
+    if (isCutoverLoan) {
+      openingPrincipal = Math.max(0, parseFloat(opening_principal_balance || 0));
+      openingInterest = Math.max(0, parseFloat(opening_interest_balance || 0));
+      openingAsOfDate = (opening_balance_as_of && opening_balance_as_of.trim()) || finalDisbursementDate;
+
+      principalBalance = openingPrincipal;
+      interestBalance = openingInterest;
+      totalPrincipalPaid = Math.max(0, parsedDisbursed - openingPrincipal);
+    }
 
     const stmt = db.prepare(`
       INSERT INTO loans (
         loan_no, employee_id, loan_lot_name, loan_source_type, origin_pbs_id, origin_pbs_name,
         sanction_no, sanction_date, disbursement_date, sanction_amount, disbursed_amount,
         monthly_installment, interest_rate, is_interest_applicable, principal_balance, interest_balance,
-        total_principal_paid, total_interest_paid, status, remarks
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, 0.0, 'ACTIVE', ?)
+        total_principal_paid, total_interest_paid, status, remarks,
+        opening_balance_as_of, opening_principal_balance, opening_interest_balance
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, 'ACTIVE', ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
       loan_no.trim(),
       employee_id,
-      loan_lot_name ? loan_lot_name.trim() : '১ম লট/বরাদ্দ',
+      loan_lot_name ? loan_lot_name.trim() : '১ম ঋণ',
       loan_source_type || 'OWN_PBS',
       loan_source_type === 'OTHER_PBS' ? (origin_pbs_id || null) : null,
       finalOriginPbsName,
@@ -459,13 +474,17 @@ router.post('/', authenticateToken, requireRole(['admin', 'accounts']), (req, re
       finalSanctionDate,
       finalDisbursementDate,
       parseFloat(sanction_amount),
-      principalBalance,
+      parsedDisbursed,
       parseFloat(monthly_installment),
       appliedRate,
       isInterestApplicable,
       principalBalance,
       interestBalance,
-      remarks || ''
+      totalPrincipalPaid,
+      remarks || '',
+      openingAsOfDate,
+      openingPrincipal,
+      openingInterest
     );
 
     const newLoanId = result.lastInsertRowid;
@@ -505,7 +524,11 @@ router.put('/:id', authenticateToken, requireRole(['admin', 'accounts']), (req, 
       custom_interest_rate,
       interest_rate,
       status,
-      remarks
+      remarks,
+      has_opening_balance,
+      opening_principal_balance,
+      opening_interest_balance,
+      opening_balance_as_of
     } = req.body;
 
     const existing = db.prepare('SELECT * FROM loans WHERE id = ? AND is_deleted = 0').get(loanId);
@@ -557,10 +580,46 @@ router.put('/:id', authenticateToken, requireRole(['admin', 'accounts']), (req, 
       if (ownSettings) finalOriginPbsName = ownSettings.pbs_name;
     }
 
-    // Disbursed amount & Principal balance adjustment
+    // Disbursed amount & balances adjustment
     const newDisbursed = disbursed_amount !== undefined ? parseFloat(disbursed_amount) : existing.disbursed_amount;
     const newSanction = sanction_amount !== undefined ? parseFloat(sanction_amount) : (newDisbursed || existing.sanction_amount);
-    const newPrincipalBalance = Math.max(0, newDisbursed - (existing.total_principal_paid || 0));
+
+    // Sum of software repayments for this loan
+    const repStats = db.prepare(`
+      SELECT COALESCE(SUM(principal_paid), 0) as prin, COALESCE(SUM(interest_paid), 0) as int
+      FROM repayments WHERE loan_id = ? AND is_deleted = 0
+    `).get(loanId);
+
+    // Sum of software provisions for this loan
+    const provStats = db.prepare(`
+      SELECT COALESCE(SUM(interest_amount), 0) as int
+      FROM interest_provisions WHERE loan_id = ? AND is_deleted = 0
+    `).get(loanId);
+
+    let newPrincipalBalance = existing.principal_balance;
+    let newInterestBalance = existing.interest_balance;
+    let newTotalPrincipalPaid = existing.total_principal_paid;
+    let newOpeningPrincipal = existing.opening_principal_balance;
+    let newOpeningInterest = existing.opening_interest_balance;
+    let newOpeningAsOf = existing.opening_balance_as_of;
+
+    const isCutoverUpdate = has_opening_balance || (opening_principal_balance !== undefined && opening_principal_balance !== null && opening_principal_balance !== '');
+    if (isCutoverUpdate) {
+      const parsedOpenPrin = Math.max(0, parseFloat(opening_principal_balance || 0));
+      const parsedOpenInt = Math.max(0, parseFloat(opening_interest_balance || 0));
+      newOpeningPrincipal = parsedOpenPrin;
+      newOpeningInterest = parsedOpenInt;
+      newOpeningAsOf = (opening_balance_as_of && opening_balance_as_of.trim()) || existing.opening_balance_as_of || finalDisbursementDate;
+
+      // Running principal balance = opening_principal - repayments_in_software
+      newPrincipalBalance = Math.max(0, parsedOpenPrin - (repStats ? repStats.prin : 0));
+      // Total principal paid across all time = (disbursed - opening_principal) + repayments_in_software
+      newTotalPrincipalPaid = Math.max(0, (newDisbursed - parsedOpenPrin) + (repStats ? repStats.prin : 0));
+      // Running interest balance = opening_interest + provisions_in_software - interest_paid_in_software
+      newInterestBalance = Math.max(0, (parsedOpenInt + (provStats ? provStats.int : 0)) - (repStats ? repStats.int : 0));
+    } else {
+      newPrincipalBalance = Math.max(0, newDisbursed - (existing.total_principal_paid || 0));
+    }
 
     db.prepare(`
       UPDATE loans
@@ -579,6 +638,11 @@ router.put('/:id', authenticateToken, requireRole(['admin', 'accounts']), (req, 
           interest_rate = ?,
           is_interest_applicable = ?,
           principal_balance = ?,
+          interest_balance = ?,
+          total_principal_paid = ?,
+          opening_balance_as_of = ?,
+          opening_principal_balance = ?,
+          opening_interest_balance = ?,
           status = ?,
           remarks = ?,
           updated_at = CURRENT_TIMESTAMP
@@ -599,6 +663,11 @@ router.put('/:id', authenticateToken, requireRole(['admin', 'accounts']), (req, 
       appliedRate,
       isInterestApplicable,
       newPrincipalBalance,
+      newInterestBalance,
+      newTotalPrincipalPaid,
+      newOpeningAsOf,
+      newOpeningPrincipal,
+      newOpeningInterest,
       status || existing.status,
       remarks !== undefined ? remarks : existing.remarks,
       loanId

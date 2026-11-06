@@ -12,6 +12,7 @@ const {
   formatBengaliMonth,
   distributeRepayment
 } = require('../services/loanCalculationService');
+const { autoProvisionMonth } = require('../services/provisionService');
 
 // Helper: Format date to Bengali display e.g. "২০ অক্টোবর ২০২৬"
 function formatDateBengaliDisplay(dateStr) {
@@ -57,6 +58,37 @@ function getMonthsRange(startMonth, endMonth) {
     }
   }
   return result;
+}
+
+// Helper: Determine repayment tracking start month considering 12-month grace period for OWN_PBS loans
+function getLoanRepaymentTrackingStartMonth(loan, repayments) {
+  // 1. If any repayment has already been made, tracking starts from the first repayment month
+  if (repayments && repayments.length > 0) {
+    const sorted = [...repayments].sort((a, b) => a.deduction_month.localeCompare(b.deduction_month));
+    return sorted[0].deduction_month;
+  }
+
+  // 2. If no repayment has been made yet:
+  const disb = loan.disbursement_date || loan.sanction_date || '2024-01-01';
+  let [y, m] = disb.slice(0, 7).split('-').map(Number);
+
+  const isOwnPbs = (loan.loan_source_type === 'OWN_PBS' || !loan.loan_source_type);
+  if (isOwnPbs) {
+    // 12 months moratorium/grace period after disbursement for OWN_PBS loans
+    y += 1;
+  } else {
+    m++;
+    if (m > 12) {
+      m = 1;
+      y++;
+    }
+  }
+
+  let startMonth = `${y}-${String(m).padStart(2, '0')}`;
+  if (startMonth < '2024-05' && disb < '2024-01-01') {
+    startMonth = '2024-05';
+  }
+  return startMonth;
 }
 
 // 1. Get List of Transferred Employees with Own PBS Loans and Due Installments
@@ -128,25 +160,14 @@ router.get('/', authenticateToken, (req, res) => {
       const lastPaidMonth = lastRepayment ? lastRepayment.deduction_month : null;
       const lastPaidDate = lastRepayment ? lastRepayment.deduction_date : null;
 
-      // Determine tracking start month
-      let trackingStartMonth = '';
-      if (repayments.length > 0) {
-        trackingStartMonth = repayments[0].deduction_month;
-      } else {
-        const disb = loan.disbursement_date || '2024-01-01';
-        let [y, m] = disb.slice(0, 7).split('-').map(Number);
-        m++;
-        if (m > 12) { m = 1; y++; }
-        trackingStartMonth = `${y}-${String(m).padStart(2, '0')}`;
-      }
-      if (trackingStartMonth < '2024-05' && loan.disbursement_date < '2024-01-01') {
-        trackingStartMonth = '2024-05';
-      }
+      // Determine tracking start month considering 12-month grace period
+      const trackingStartMonth = getLoanRepaymentTrackingStartMonth(loan, repayments);
+      const isPreRepaymentGracePeriod = (repayments.length === 0) && (currentYearMonth < trackingStartMonth);
 
       // Calculate overdue months up to currentYearMonth
       let dueMonthsList = [];
       const totalRemaining = loan.principal_balance + loan.interest_balance;
-      if (loan.status === 'ACTIVE' && totalRemaining > 0) {
+      if (loan.status === 'ACTIVE' && totalRemaining > 0 && !isPreRepaymentGracePeriod) {
         if (trackingStartMonth <= currentYearMonth) {
           const allPotential = getMonthsRange(trackingStartMonth, currentYearMonth);
           dueMonthsList = allPotential.filter(m => !paidMonthsSet.has(m));
@@ -172,7 +193,9 @@ router.get('/', authenticateToken, (req, res) => {
 
       // Format Due Period Text
       let duePeriodText = 'কোন বকেয়া নেই';
-      if (dueMonthsCount === 1) {
+      if (isPreRepaymentGracePeriod) {
+        duePeriodText = `১২ মাস গ্রেস পিরিয়ড (কিস্তি শুরু: ${formatMonthYearShort(trackingStartMonth)})`;
+      } else if (dueMonthsCount === 1) {
         duePeriodText = formatMonthYearShort(dueMonthsList[0]);
       } else if (dueMonthsCount > 1) {
         duePeriodText = `${formatMonthYearShort(dueMonthsList[0])} হতে ${formatMonthYearShort(dueMonthsList[dueMonthsList.length - 1])}`;
@@ -210,6 +233,8 @@ router.get('/', authenticateToken, (req, res) => {
         dueMonthsList,
         duePeriodText,
         overdueAmount,
+        isInGracePeriod: isPreRepaymentGracePeriod,
+        scheduledStartMonth: trackingStartMonth,
         latestDemandLetter: latestLetter
       });
     }
@@ -276,7 +301,8 @@ router.post('/post-collection', authenticateToken, requireRole(['admin', 'accoun
       monthly_amounts,
       total_amount,
       manual_posting,
-      remarks
+      remarks,
+      repayment_method
     } = req.body;
 
     if (!loan_id) {
@@ -379,6 +405,20 @@ router.post('/post-collection', authenticateToken, requireRole(['admin', 'accoun
       }
     }
 
+    // Auto-provision interest for each month if not yet provisioned
+    for (const m of parsedMonths) {
+      try {
+        autoProvisionMonth(m);
+      } catch (e) {
+        console.warn(`Auto provision for ${m} before posting:`, e.message);
+      }
+    }
+
+    // Determine repayment method and remittance status
+    const isOtherPbs = (loan.loan_source_type === 'OTHER_PBS' || (loan.current_posting_pbs && loan.current_posting_pbs !== 'নিজস্ব পবিস'));
+    const methodToUse = repayment_method || (isOtherPbs ? 'INTER_PBS_COLLECTION' : 'SALARY_DEDUCTION');
+    const remStatus = (loan.loan_source_type === 'OTHER_PBS' && methodToUse === 'SALARY_DEDUCTION') ? 'PENDING' : 'NOT_APPLICABLE';
+
     // Calculate installment amount per month
     const amountPerMonth = Math.round((amountNum / parsedMonths.length) * 100) / 100;
     const collectionBatchId = randomUUID();
@@ -404,7 +444,7 @@ router.post('/post-collection', authenticateToken, requireRole(['admin', 'accoun
           ?, ?, ?, ?,
           ?, ?,
           ?, ?,
-          'INTER_PBS_COLLECTION', ?, 'NOT_APPLICABLE', ?
+          ?, ?, ?, ?
         )
       `);
 
@@ -423,14 +463,31 @@ router.post('/post-collection', authenticateToken, requireRole(['admin', 'accoun
         const newPrin = Math.max(0, curPrin - principalPaid);
         const newInt = Math.max(0, curInt - interestPaid);
 
-        const note = `${source_pbs_name ? source_pbs_name + ' হতে প্রাপ্ত: ' : ''}${remarks || 'অন্য পবিস হতে রেমিট্যান্স প্রাপ্তি'}`;
+        let note = remarks || '';
+        if (!note) {
+          if (methodToUse === 'INTER_PBS_COLLECTION') {
+            note = source_pbs_name ? `${source_pbs_name} হতে রেমিট্যান্স প্রাপ্তি` : 'অন্য পবিস হতে রেমিট্যান্স প্রাপ্তি';
+          } else if (methodToUse === 'SALARY_DEDUCTION') {
+            note = 'মাসিক বেতন হতে কিস্তি কর্তন';
+          } else if (methodToUse === 'BANK_DEPOSIT') {
+            note = 'ব্যাংক জমা / পে-অর্ডারের মাধ্যমে কিস্তি প্রদান';
+          } else if (methodToUse === 'CASH') {
+            note = 'নগদ জমার মাধ্যমে কিস্তি প্রদান';
+          } else if (methodToUse === 'LUMPSUM_SETTLEMENT') {
+            note = 'এককালীন ঋণ সমন্বয়';
+          } else {
+            note = 'কিস্তি আদায়';
+          }
+        } else if (source_pbs_name && methodToUse === 'INTER_PBS_COLLECTION' && !note.includes(source_pbs_name)) {
+          note = `${source_pbs_name} হতে প্রাপ্ত: ${note}`;
+        }
 
         insertRepStmt.run(
           loan.id, loan.employee_id, month, receipt_date, collectionVoucherNo,
           thisMonthAmount, principalPaid, interestPaid, advancePaid,
           curPrin, newPrin,
           curInt, newInt,
-          collectionBatchId,
+          methodToUse, collectionBatchId, remStatus,
           note
         );
 
@@ -462,13 +519,23 @@ router.post('/post-collection', authenticateToken, requireRole(['admin', 'accoun
         WHERE loan_id = ? AND status = 'ISSUED'
       `).run(loan.id);
 
+      // Method label for audit
+      const methodLabels = {
+        'INTER_PBS_COLLECTION': 'অন্য পবিস রেমিট্যান্স',
+        'SALARY_DEDUCTION': 'বেতন কিস্তি কর্তন',
+        'BANK_DEPOSIT': 'ব্যাংক জমা',
+        'CASH': 'নগদ জমা',
+        'LUMPSUM_SETTLEMENT': 'এককালীন সমন্বয়'
+      };
+      const label = methodLabels[methodToUse] || methodToUse;
+
       // Audit Log
       logAudit(
         req,
         'CREATE',
         'REPAYMENT',
         loan.id,
-        `অন্য পবিস (${source_pbs_name || loan.current_posting_pbs}) হতে বদলিকৃত কর্মচারী ${loan.emp_name}-এর ঋণ নং ${loan.loan_no}-এর ${parsedMonths.length} মাসের জন্য মোট ${amountNum} টাকা আদায় পোস্টিং করা হয়েছে। (অগ্রিম: ${totalAdvancePaid}, ভাউচার: ${voucher_no || '-'})`
+        `${label}: কর্মচারী ${loan.emp_name}-এর ঋণ নং ${loan.loan_no}-এর ${parsedMonths.length} মাসের জন্য মোট ${amountNum} টাকা পোস্টিং করা হয়েছে। (আসল: ${totalPrinPaid}, সুদ: ${totalIntPaid}, অগ্রিম: ${totalAdvancePaid}, ভাউচার: ${voucher_no || '-'})`
       );
 
       return {
@@ -477,8 +544,9 @@ router.post('/post-collection', authenticateToken, requireRole(['admin', 'accoun
         totalPrincipalPaid: totalPrinPaid,
         totalInterestPaid: totalIntPaid,
         totalAdvancePaid,
-        advanceBalance: loan.advance_balance + totalAdvancePaid,
-        newStatus
+        advanceBalance: (loan.advance_balance || 0) + totalAdvancePaid,
+        newStatus,
+        repaymentMethod: methodToUse
       };
     });
 
@@ -494,6 +562,7 @@ router.post('/post-collection', authenticateToken, requireRole(['admin', 'accoun
     res.status(500).json({ success: false, message: 'কিস্তি পোস্টিং ব্যর্থ হয়েছে: ' + error.message });
   }
 });
+
 
 // 3. Generate Official Demand Letter (তাগাদা পত্র) for Transferred Employee
 router.post('/generate-consolidated-demand-letter', authenticateToken, requireRole(['admin', 'accounts']), (req, res) => {
@@ -532,21 +601,10 @@ router.post('/generate-consolidated-demand-letter', authenticateToken, requireRo
 
       const repayments = repaymentsStmt.all(loan.id);
       const paidMonths = new Set(repayments.map(repayment => repayment.deduction_month));
-      let startMonth;
-      if (repayments.length > 0) {
-        startMonth = repayments[0].deduction_month;
-      } else {
-        const disbursementDate = loan.disbursement_date || '2024-01-01';
-        let [year, month] = disbursementDate.slice(0, 7).split('-').map(Number);
-        month++;
-        if (month > 12) {
-          month = 1;
-          year++;
-        }
-        startMonth = `${year}-${String(month).padStart(2, '0')}`;
-      }
-      if (startMonth < '2024-05' && loan.disbursement_date < '2024-01-01') {
-        startMonth = '2024-05';
+      const startMonth = getLoanRepaymentTrackingStartMonth(loan, repayments);
+      if (repayments.length === 0 && asOnMonth < startMonth) {
+        // Still in 12-month grace period, no overdue installments
+        continue;
       }
       if (startMonth > asOnMonth) continue;
 
@@ -649,6 +707,176 @@ router.post('/generate-consolidated-demand-letter', authenticateToken, requireRo
   } catch (error) {
     console.error('Generate consolidated demand letter error:', error);
     res.status(500).json({ success: false, message: 'সম্মিলিত তাগাদা পত্র তৈরি করা যায়নি।' });
+  }
+});
+
+// 3.1 Generate Demand Letter Grouped by Destination PBS
+router.post('/generate-pbs-demand-letter', authenticateToken, requireRole(['admin', 'accounts']), (req, res) => {
+  try {
+    const { target_pbs_name, memo_no, letter_date } = req.body;
+    if (!target_pbs_name) {
+      return res.status(400).json({ success: false, message: 'সংশ্লিষ্ট পবিসের নাম নির্বাচন করুন।' });
+    }
+
+    const ownSettings = db.prepare('SELECT * FROM pbs_settings WHERE id = 1').get() || {};
+    const ownPbsName = ownSettings.pbs_name || 'গাজীপুর পল্লী বিদ্যুৎ সমিতি-২';
+    const today = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const letterDate = letter_date || today;
+    const asOnMonth = letterDate.slice(0, 7);
+
+    // Fetch target PBS details if available in other_pbs
+    let targetPbs = db.prepare('SELECT * FROM other_pbs WHERE pbs_name = ?').get(target_pbs_name) || null;
+
+    // Fetch all active OWN_PBS loans for employees stationed at target_pbs_name
+    const loans = db.prepare(`
+      SELECT l.*, e.id AS employee_id, e.emp_code, e.name AS emp_name,
+             e.designation, e.department, e.mobile, e.current_posting_pbs
+      FROM loans l
+      JOIN employees e ON l.employee_id = e.id
+      WHERE l.loan_source_type = 'OWN_PBS'
+        AND l.status = 'ACTIVE'
+        AND l.is_deleted = 0
+        AND e.is_deleted = 0
+        AND e.current_posting_pbs = ?
+      ORDER BY e.emp_code ASC, l.loan_no ASC
+    `).all(target_pbs_name);
+
+    if (loans.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `${target_pbs_name}-এ বদলিকৃত কোনো সক্রিয় ঋণ হিসাব পাওয়া যায়নি।`
+      });
+    }
+
+    const repaymentsStmt = db.prepare(`
+      SELECT deduction_month
+      FROM repayments
+      WHERE loan_id = ? AND is_deleted = 0
+      ORDER BY deduction_month ASC
+    `);
+
+    const rows = [];
+    for (const loan of loans) {
+      const totalRemaining = Number(loan.principal_balance || 0) + Number(loan.interest_balance || 0);
+      const monthlyInstallment = Number(loan.monthly_installment || 0);
+      if (totalRemaining <= 0 || monthlyInstallment <= 0) continue;
+
+      const repayments = repaymentsStmt.all(loan.id);
+      const paidMonths = new Set(repayments.map(repayment => repayment.deduction_month));
+      const startMonth = getLoanRepaymentTrackingStartMonth(loan, repayments);
+      if (repayments.length === 0 && asOnMonth < startMonth) {
+        continue;
+      }
+      if (startMonth > asOnMonth) continue;
+
+      const dueMonths = getMonthsRange(startMonth, asOnMonth).filter(month => !paidMonths.has(month));
+      const maxDueCount = Math.ceil(totalRemaining / monthlyInstallment);
+      const cappedDueMonths = dueMonths.slice(0, maxDueCount);
+      if (cappedDueMonths.length === 0) continue;
+
+      let duePeriodText = formatMonthYearShort(cappedDueMonths[0]);
+      if (cappedDueMonths.length > 1) {
+        duePeriodText += ` হতে ${formatMonthYearShort(cappedDueMonths[cappedDueMonths.length - 1])}`;
+      }
+
+      rows.push({
+        loanId: loan.id,
+        loanNo: loan.loan_no,
+        sanctionNo: loan.sanction_no,
+        disbursementDate: loan.disbursement_date,
+        disbursedAmount: loan.disbursed_amount,
+        employeeId: loan.employee_id,
+        employeeName: loan.emp_name,
+        empCode: loan.emp_code,
+        designation: loan.designation || '',
+        mobile: loan.mobile || '',
+        pbsName: target_pbs_name,
+        monthlyInstallment,
+        dueMonthsCount: cappedDueMonths.length,
+        duePeriodText,
+        overdueAmount: Math.min(cappedDueMonths.length * monthlyInstallment, totalRemaining),
+        principalBalance: loan.principal_balance,
+        interestBalance: loan.interest_balance,
+        totalBalance: totalRemaining
+      });
+    }
+
+    if (rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: `${target_pbs_name}-এ বর্তমানে কোনো বকেয়া কিস্তিযুক্ত ঋণ নেই।`
+      });
+    }
+
+    const employeeCount = new Set(rows.map(r => r.employeeId)).size;
+    const totalDueAmount = rows.reduce((sum, r) => sum + r.overdueAmount, 0);
+    const totalDueInstallments = rows.reduce((sum, r) => sum + r.dueMonthsCount, 0);
+
+    const count = db.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM demand_letters) +
+        (SELECT COUNT(*) FROM consolidated_demand_letters) AS count
+    `).get().count + 1;
+
+    const letterNo = `DL-${letterDate.slice(0, 7).replace('-', '')}-${String(count).padStart(3, '0')}`;
+    const memoPrefix = (ownSettings.memo_no_prefix || '২৭.১২.৬১০০.৫৪২.০১.০২৪').replace(/[.\-]+$/, '');
+    const defaultMemo = memo_no || `${memoPrefix}.${toBengaliDigits(letterDate.slice(2, 4))}-${toBengaliDigits(String(count).padStart(3, '0'))}`;
+    const amountInWords = amountInBengaliWords(totalDueAmount);
+
+    const letter = {
+      letter_no: letterNo,
+      memo_no: defaultMemo,
+      letter_date: letterDate,
+      target_pbs_name,
+      total_due_amount: totalDueAmount,
+      total_due_installments: totalDueInstallments,
+      employee_count: employeeCount,
+      amount_in_words: amountInWords
+    };
+
+    // Store in consolidated_demand_letters
+    const snapshot = JSON.stringify({
+      target_pbs_name,
+      rows,
+      totalDueAmount,
+      totalDueInstallments,
+      employeeCount
+    });
+
+    const insertLetter = db.prepare(`
+      INSERT INTO consolidated_demand_letters (
+        letter_no, memo_no, letter_date, total_due_amount,
+        total_due_installments, pbs_count, employee_count,
+        amount_in_words, details_json, created_by
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+    `);
+    const insertRes = insertLetter.run(
+      letterNo, defaultMemo, letterDate, totalDueAmount,
+      totalDueInstallments, employeeCount, amountInWords, snapshot, req.user.username
+    );
+
+    logAudit(req, 'CREATE', 'DEMAND_LETTER', insertRes.lastInsertRowid, {
+      type: 'PBS_WISE_DEMAND_LETTER',
+      targetPbsName: target_pbs_name,
+      letterNo,
+      memoNo: defaultMemo,
+      employeeCount,
+      totalDueAmount
+    });
+
+    res.json({
+      success: true,
+      message: `${target_pbs_name}-এর অনুকূলে তাগাদা পত্র সফলভাবে প্রস্তুত করা হয়েছে।`,
+      pbsWise: true,
+      letter,
+      ownPbs: ownSettings,
+      targetPbs,
+      rows,
+      letterDateFormatted: formatDateBengaliDisplay(letterDate)
+    });
+  } catch (error) {
+    console.error('Generate PBS demand letter error:', error);
+    res.status(500).json({ success: false, message: 'পবিস ভিত্তিক তাগাদা পত্র তৈরি করা যায়নি: ' + error.message });
   }
 });
 
@@ -789,18 +1017,7 @@ router.get('/demand-letter/:id', authenticateToken, (req, res) => {
     const paidSet = new Set(repayments.map(r => r.deduction_month));
 
     const letterYm = letter.letter_date.slice(0, 7);
-    let startMonth = '';
-    if (repayments.length > 0) {
-      startMonth = repayments[0].deduction_month;
-    } else {
-      let [y, m] = letter.disbursement_date.slice(0, 7).split('-').map(Number);
-      m++;
-      if (m > 12) { m = 1; y++; }
-      startMonth = `${y}-${String(m).padStart(2, '0')}`;
-    }
-    if (startMonth < '2024-05' && letter.disbursement_date < '2024-01-01') {
-      startMonth = '2024-05';
-    }
+    const startMonth = getLoanRepaymentTrackingStartMonth(letter, repayments);
 
     let dueMonthsDetailed = [];
     if (startMonth <= letterYm) {
@@ -954,15 +1171,12 @@ router.get('/export/excel', authenticateToken, (req, res) => {
         if (m > 12) { m = 1; y++; }
         nextDueStartMonth = `${y}-${String(m).padStart(2, '0')}`;
       } else {
-        const disb = loan.disbursement_date || '2024-01-01';
-        let [y, m] = disb.slice(0, 7).split('-').map(Number);
-        m++;
-        if (m > 12) { m = 1; y++; }
-        nextDueStartMonth = `${y}-${String(m).padStart(2, '0')}`;
+        nextDueStartMonth = getLoanRepaymentTrackingStartMonth(loan, reps);
       }
 
+      const isPreRepaymentGracePeriod = (reps.length === 0) && (currentYearMonth < nextDueStartMonth);
       let dueList = [];
-      if (nextDueStartMonth <= currentYearMonth) {
+      if (nextDueStartMonth <= currentYearMonth && !isPreRepaymentGracePeriod) {
         dueList = getMonthsRange(nextDueStartMonth, currentYearMonth).filter(m => !paidSet.has(m));
       }
 
@@ -971,7 +1185,9 @@ router.get('/export/excel', authenticateToken, (req, res) => {
       const overdueAmt = Math.min(dueCount * loan.monthly_installment, totalRemaining);
 
       let periodText = 'কোন বকেয়া নেই';
-      if (dueCount === 1) {
+      if (isPreRepaymentGracePeriod) {
+        periodText = `১২ মাস গ্রেস পিরিয়ড (কিস্তি শুরু: ${formatMonthYearShort(nextDueStartMonth)})`;
+      } else if (dueCount === 1) {
         periodText = formatMonthYearShort(dueList[0]);
       } else if (dueCount > 1) {
         periodText = `${formatMonthYearShort(dueList[0])} হতে ${formatMonthYearShort(dueList[dueList.length - 1])}`;

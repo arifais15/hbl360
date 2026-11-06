@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { randomUUID } = require('crypto');
 const db = require('../database/db');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 const { logAudit } = require('../middleware/audit');
@@ -73,7 +74,18 @@ router.get('/', authenticateToken, (req, res) => {
 // Single Repayment Post (Individual salary deduction)
 router.post('/', authenticateToken, requireRole(['admin', 'accounts']), (req, res) => {
   const transaction = db.transaction(() => {
-    const { loan_id, deduction_month, deduction_date, amount, voucher_no, principal_posting, interest_posting, remarks } = req.body;
+    const {
+      loan_id,
+      deduction_month,
+      deduction_date,
+      amount,
+      voucher_no,
+      principal_posting,
+      interest_posting,
+      remarks,
+      repayment_method = 'SALARY_DEDUCTION',
+      allow_suspended_repayment = false
+    } = req.body;
 
     if (!loan_id || !deduction_month || !deduction_date || !amount || parseFloat(amount) <= 0) {
       throw new Error('সকল প্রয়োজনীয় তথ্য এবং সঠিক টাকার পরিমাণ প্রদান করুন।');
@@ -90,19 +102,24 @@ router.post('/', authenticateToken, requireRole(['admin', 'accounts']), (req, re
     if (!loan) {
       throw new Error('ঋণ রেকর্ডটি খুঁজে পাওয়া যায়নি।');
     }
-    if (loan.salary_deduction_suspended) {
-      throw new Error('এই ঋণের বেতন হতে কিস্তি কর্তন স্থগিত রয়েছে।');
+
+    // Check if salary deduction is suspended
+    const isSalaryDeduction = (repayment_method === 'SALARY_DEDUCTION');
+    if (loan.salary_deduction_suspended && isSalaryDeduction && !allow_suspended_repayment) {
+      throw new Error('এই ঋণের নিয়মিত বেতন হতে কিস্তি কর্তন স্থগিত রয়েছে। এককালীন সমন্বয়, ব্যাংক জমা বা নগদ পরিশোধের মাধ্যমে পোস্টিং করুন অথবা বিশেষ অনুমোদন সক্রিয় করুন।');
     }
 
-    // Duplicate guard: check if active repayment already exists for this loan & month
-    const existingRep = db.prepare(`
-      SELECT id, deduction_date, total_amount, voucher_no
-      FROM repayments
-      WHERE loan_id = ? AND deduction_month = ? AND is_deleted = 0
-    `).get(loan.id, deduction_month);
+    // Duplicate guard: check if salary deduction repayment already exists for this loan & month
+    if (isSalaryDeduction) {
+      const existingRep = db.prepare(`
+        SELECT id, deduction_date, total_amount, voucher_no
+        FROM repayments
+        WHERE loan_id = ? AND deduction_month = ? AND repayment_method = 'SALARY_DEDUCTION' AND is_deleted = 0
+      `).get(loan.id, deduction_month);
 
-    if (existingRep) {
-      throw new Error(`ডুপ্লিকেট প্রতিরোধ: এই ঋণের জন্য ${deduction_month} মাসের কিস্তি (টাকা: ${existingRep.total_amount}) ইতোমধ্যে কর্তন করা হয়েছে (তারিখ: ${existingRep.deduction_date})।`);
+      if (existingRep) {
+        throw new Error(`ডুপ্লিকেট প্রতিরোধ: এই ঋণের জন্য ${deduction_month} মাসের বেতন কর্তনের কিস্তি (টাকা: ${existingRep.total_amount}) ইতোমধ্যে কর্তন করা হয়েছে (তারিখ: ${existingRep.deduction_date})।`);
+      }
     }
 
     // Repayment Order Rule:
@@ -124,7 +141,7 @@ router.post('/', authenticateToken, requireRole(['admin', 'accounts']), (req, re
         previous_principal_balance, new_principal_balance,
         previous_interest_balance, new_interest_balance,
         repayment_method, remittance_status, principal_posting, interest_posting, remarks
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SALARY_DEDUCTION', ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = insertRepayment.run(
@@ -141,6 +158,7 @@ router.post('/', authenticateToken, requireRole(['admin', 'accounts']), (req, re
       distribution.newPrincipalBalance,
       loan.interest_balance,
       distribution.newInterestBalance,
+      repayment_method,
       remittanceStatus,
       principal_posting || null,
       interest_posting || null,
@@ -176,17 +194,34 @@ router.post('/', authenticateToken, requireRole(['admin', 'accounts']), (req, re
 
   try {
     const data = transaction();
+    const methodNames = {
+      'BANK_DEPOSIT': 'ব্যাংক জমা / পে-অর্ডার',
+      'CASH': 'নগদ জমা',
+      'LUMPSUM_SETTLEMENT': 'এককালীন ঋণ সমন্বয়',
+      'SALARY_DEDUCTION': 'বেতন হতে কিস্তি কর্তন'
+    };
+    const methodLabel = methodNames[req.body.repayment_method] || 'কিস্তি আদায়';
+
     logAudit(
       req,
       'CREATE',
       'REPAYMENT',
       data.repaymentId,
-      `কিস্তি কর্তন: ঋণ নং ${data.loan.loan_no}, মাস: ${req.body.deduction_month}, মোট: ${req.body.amount} (আসল: ${data.distribution.principalPaid}, সুদ: ${data.distribution.interestPaid}, অগ্রিম: ${data.distribution.unappliedAmount})`
+      `${methodLabel}: ঋণ নং ${data.loan.loan_no}, মাস: ${req.body.deduction_month}, মোট: ${req.body.amount} (আসল: ${data.distribution.principalPaid}, সুদ: ${data.distribution.interestPaid}, অগ্রিম: ${data.distribution.unappliedAmount})`
     );
+
+    let successMsg = `বেতন থেকে কিস্তির অর্থ সফলভাবে কর্তন করা হয়েছে।${data.distribution.unappliedAmount > 0 ? ` ${data.distribution.unappliedAmount} টাকা অগ্রিম জমা হিসেবে রাখা হয়েছে।` : ''}`;
+    if (req.body.repayment_method === 'BANK_DEPOSIT') {
+      successMsg = `ব্যাংক জমা / পে-অর্ডারের মাধ্যমে কিস্তি/ঋণ অর্থ সফলভাবে জমা করা হয়েছে।${data.distribution.unappliedAmount > 0 ? ` ${data.distribution.unappliedAmount} টাকা অগ্রিম জমা হিসেবে রাখা হয়েছে।` : ''}`;
+    } else if (req.body.repayment_method === 'CASH') {
+      successMsg = `নগদ জমার মাধ্যমে কিস্তি/ঋণ অর্থ সফলভাবে জমা করা হয়েছে।${data.distribution.unappliedAmount > 0 ? ` ${data.distribution.unappliedAmount} টাকা অগ্রিম জমা হিসেবে রাখা হয়েছে।` : ''}`;
+    } else if (req.body.repayment_method === 'LUMPSUM_SETTLEMENT') {
+      successMsg = `এককালীন সমন্বয়ের মাধ্যমে ঋণ অর্থ সফলভাবে পরিশোধ করা হয়েছে।${data.distribution.unappliedAmount > 0 ? ` ${data.distribution.unappliedAmount} টাকা অগ্রিম জমা হিসেবে রাখা হয়েছে।` : ''}`;
+    }
 
     res.json({
       success: true,
-      message: `বেতন থেকে কিস্তির অর্থ সফলভাবে কর্তন করা হয়েছে।${data.distribution.unappliedAmount > 0 ? ` ${data.distribution.unappliedAmount} টাকা অগ্রিম জমা হিসেবে রাখা হয়েছে।` : ''}`,
+      message: successMsg,
       id: data.repaymentId,
       distribution: data.distribution
     });
@@ -413,6 +448,232 @@ router.post('/batch-delete', authenticateToken, requireRole(['admin', 'accounts'
   } catch (err) {
     console.error('Batch delete repayments error:', err);
     res.status(400).json({ success: false, message: err.message || 'ব্যাচ কিস্তি ডিলিট ব্যর্থ হয়েছে।' });
+  }
+});
+
+// Multi-Month Repayment / Remittance Posting (একসাথে একাধিক মাসের কিস্তি/রেমিট্যান্স পোস্টিং)
+router.post('/multi-month', authenticateToken, requireRole(['admin', 'accounts']), (req, res) => {
+  const transaction = db.transaction(() => {
+    const {
+      loan_id,
+      repayment_method = 'INTER_PBS_COLLECTION',
+      source_pbs_name,
+      receipt_date,
+      bank_advice_no,
+      schedule
+    } = req.body;
+
+    if (!loan_id) {
+      throw new Error('ঋণ হিসাব নির্বাচন করুন।');
+    }
+    if (!receipt_date) {
+      throw new Error('রেমিট্যান্স/কিস্তি প্রাপ্তির তারিখ প্রদান করুন।');
+    }
+    if (!schedule || !Array.isArray(schedule) || schedule.length === 0) {
+      throw new Error('কমপক্ষে একটি মাসের কিস্তি শিডিউল প্রদান করুন।');
+    }
+
+    const loan = db.prepare('SELECT * FROM loans WHERE id = ? AND is_deleted = 0').get(loan_id);
+    if (!loan) {
+      throw new Error('ঋণ রেকর্ডটি খুঁজে পাওয়া যায়নি।');
+    }
+
+    // Sort schedule chronologically by deduction_month ASC
+    const sortedSchedule = [...schedule].sort((a, b) => (a.deduction_month || '').localeCompare(b.deduction_month || ''));
+
+    // Validate months and amounts
+    const seenMonths = new Set();
+    for (const item of sortedSchedule) {
+      if (!item.deduction_month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(item.deduction_month)) {
+        throw new Error(`অবৈধ মাস ফরম্যাট: ${item.deduction_month}`);
+      }
+      if (seenMonths.has(item.deduction_month)) {
+        throw new Error(`শিডিউলে একই মাস (${item.deduction_month}) একাধিকবার রয়েছে।`);
+      }
+      seenMonths.add(item.deduction_month);
+
+      const amt = parseFloat(item.amount);
+      if (!Number.isFinite(amt) || amt <= 0) {
+        throw new Error(`${item.deduction_month} মাসের জন্য সঠিক টাকার পরিমাণ দিন।`);
+      }
+    }
+
+    // Duplicate check: check if any month already has an active repayment
+    const checkStmt = db.prepare(`
+      SELECT deduction_month FROM repayments
+      WHERE loan_id = ? AND deduction_month = ? AND is_deleted = 0
+    `);
+    for (const item of sortedSchedule) {
+      const exists = checkStmt.get(loan.id, item.deduction_month);
+      if (exists) {
+        throw new Error(`${item.deduction_month} মাসের কিস্তি ইতিপূর্বে পোস্টিং করা হয়েছে। ডুপ্লিকেট এন্ট্রি সম্ভব নয়।`);
+      }
+    }
+
+    // Auto provision interest for all schedule months if not already provisioned
+    for (const item of sortedSchedule) {
+      try {
+        autoProvisionMonth(item.deduction_month);
+      } catch (e) {
+        console.warn(`Auto provision for ${item.deduction_month} error:`, e.message);
+      }
+    }
+
+    let curPrin = loan.principal_balance;
+    let curInt = loan.interest_balance;
+    let totalPrinPaid = 0;
+    let totalIntPaid = 0;
+    let totalAdvancePaid = 0;
+    let totalRemittance = 0;
+
+    const collectionBatchId = randomUUID();
+    const defaultVoucherNo = bank_advice_no || `BA-${receipt_date.slice(0, 7).replace('-', '')}`;
+
+    const insertRepayment = db.prepare(`
+      INSERT INTO repayments (
+        loan_id, employee_id, deduction_month, deduction_date, voucher_no,
+        total_amount, principal_paid, interest_paid, advance_paid,
+        previous_principal_balance, new_principal_balance,
+        previous_interest_balance, new_interest_balance,
+        repayment_method, collection_batch_id, remittance_status,
+        principal_posting, interest_posting, remarks
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const processedItems = [];
+
+    for (const item of sortedSchedule) {
+      const itemAmt = parseFloat(item.amount);
+      totalRemittance += itemAmt;
+
+      // Sequential BREB distribution: principal first, then interest, then advance
+      const dist = distributeRepayment(itemAmt, curPrin, curInt);
+
+      const itemVoucher = item.voucher_no || defaultVoucherNo;
+      const itemRemarks = item.remarks || (source_pbs_name ? `${source_pbs_name} হতে রেমিট্যান্স প্রাপ্তি` : 'অন্য পবিস হতে রেমিট্যান্স প্রাপ্তি');
+
+      // Remittance status
+      const remStatus = (loan.loan_source_type === 'OTHER_PBS' && repayment_method === 'SALARY_DEDUCTION')
+        ? 'PENDING'
+        : 'NOT_APPLICABLE';
+
+      const resRun = insertRepayment.run(
+        loan.id,
+        loan.employee_id,
+        item.deduction_month,
+        receipt_date,
+        itemVoucher,
+        itemAmt,
+        dist.principalPaid,
+        dist.interestPaid,
+        dist.unappliedAmount,
+        curPrin,
+        dist.newPrincipalBalance,
+        curInt,
+        dist.newInterestBalance,
+        repayment_method,
+        collectionBatchId,
+        remStatus,
+        item.principal_posting || null,
+        item.interest_posting || null,
+        itemRemarks
+      );
+
+      processedItems.push({
+        id: resRun.lastInsertRowid,
+        month: item.deduction_month,
+        amount: itemAmt,
+        principalPaid: dist.principalPaid,
+        interestPaid: dist.interestPaid,
+        advancePaid: dist.unappliedAmount,
+        newPrincipalBalance: dist.newPrincipalBalance,
+        newInterestBalance: dist.newInterestBalance
+      });
+
+      totalPrinPaid += dist.principalPaid;
+      totalIntPaid += dist.interestPaid;
+      totalAdvancePaid += dist.unappliedAmount;
+      curPrin = dist.newPrincipalBalance;
+      curInt = dist.newInterestBalance;
+    }
+
+    // Update Loan balance
+    const isFullyPaid = (curPrin <= 0 && curInt <= 0);
+    const newStatus = isFullyPaid ? 'CLOSED' : 'ACTIVE';
+
+    db.prepare(`
+      UPDATE loans
+      SET principal_balance = ?,
+          interest_balance = ?,
+          total_principal_paid = total_principal_paid + ?,
+          total_interest_paid = total_interest_paid + ?,
+          advance_balance = advance_balance + ?,
+          status = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      curPrin,
+      curInt,
+      totalPrinPaid,
+      totalIntPaid,
+      totalAdvancePaid,
+      newStatus,
+      loan.id
+    );
+
+    // If demand letters exist with status 'ISSUED', update to 'SETTLED'
+    if (isFullyPaid || curPrin <= 0) {
+      db.prepare(`
+        UPDATE demand_letters
+        SET status = 'SETTLED'
+        WHERE loan_id = ? AND status = 'ISSUED'
+      `).run(loan.id);
+    }
+
+    return {
+      loan,
+      collectionBatchId,
+      processedItems,
+      totalRemittance,
+      totalPrinPaid,
+      totalIntPaid,
+      totalAdvancePaid,
+      finalPrincipalBalance: curPrin,
+      finalInterestBalance: curInt,
+      newStatus
+    };
+  });
+
+  try {
+    const data = transaction();
+
+    logAudit(
+      req,
+      'CREATE',
+      'REPAYMENT',
+      data.loan.id,
+      `মাল্টি-মান্থ কিস্তি/রেমিট্যান্স পোস্টিং: ঋণ নং ${data.loan.loan_no}, মোট ${data.processedItems.length} টি মাস, মোট টাকা: ${data.totalRemittance} (আসল: ${data.totalPrinPaid}, সুদ: ${data.totalIntPaid}, অগ্রিম: ${data.totalAdvancePaid})`
+    );
+
+    res.json({
+      success: true,
+      message: `একসাথে ${data.processedItems.length} মাসের কিস্তি পোস্টিং সফলভাবে সম্পন্ন হয়েছে।`,
+      batchId: data.collectionBatchId,
+      summary: {
+        monthsCount: data.processedItems.length,
+        totalAmount: data.totalRemittance,
+        totalPrincipalPaid: data.totalPrinPaid,
+        totalInterestPaid: data.totalIntPaid,
+        totalAdvancePaid: data.totalAdvancePaid,
+        newPrincipalBalance: data.finalPrincipalBalance,
+        newInterestBalance: data.finalInterestBalance,
+        newStatus: data.newStatus
+      },
+      items: data.processedItems
+    });
+  } catch (err) {
+    console.error('Multi-month repayment error:', err);
+    res.status(400).json({ success: false, message: err.message || 'মাল্টি-মান্থ কিস্তি পোস্টিং ব্যর্থ হয়েছে।' });
   }
 });
 

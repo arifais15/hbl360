@@ -93,7 +93,33 @@ function autoProvisionMonth(targetMonth = null, targetDate = null) {
 
       // Monthly rest balance: interest is calculated on the just previous month ending balance
       const principalOnDate = getPreviousMonthEndingPrincipalBalance(loan, month);
-      const interestAmt = calculateMonthlyInterestProvision(principalOnDate, rate);
+
+      // Check if target month is the disbursement month (e.g. disbursed on 15th of the month)
+      const disbDate = loan.disbursement_date || '';
+      const disbMonth = disbDate.slice(0, 7);
+      const isDisbMonth = (disbMonth === month);
+
+      // Total days in target month
+      const y = parseInt(month.slice(0, 4), 10);
+      const m = parseInt(month.slice(5, 7), 10);
+      const daysInMonth = new Date(y, m, 0).getDate();
+
+      let activeDays = daysInMonth;
+      if (isDisbMonth && disbDate.length >= 10) {
+        const startDay = parseInt(disbDate.slice(8, 10), 10) || 1;
+        activeDays = Math.max(0, daysInMonth - startDay + 1);
+      }
+
+      // If provision date is before month end (fractional cutoff)
+      if (date && date.slice(0, 7) === month && date.length >= 10) {
+        const provDay = parseInt(date.slice(8, 10), 10) || daysInMonth;
+        if (provDay < daysInMonth) {
+          const startDay = isDisbMonth ? (parseInt(disbDate.slice(8, 10), 10) || 1) : 1;
+          activeDays = Math.max(0, provDay - startDay + 1);
+        }
+      }
+
+      const interestAmt = calculateMonthlyInterestProvision(principalOnDate, rate, activeDays, daysInMonth);
 
       if (interestAmt > 0) {
         insertProvision.run(

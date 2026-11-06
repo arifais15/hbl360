@@ -11,17 +11,7 @@ const {
   readWorkbookRows,
   uploadWorkbook
 } = require('../services/excelImportService');
-
-const employeeImportFields = [
-  { key: 'emp_code', required: true, description: 'কর্মচারীর পে আইডি / কোড। ১-৪ সংখ্যার কোড ৪ সংখ্যায় পূরণ হবে।' },
-  { key: 'name', required: true, description: 'কর্মকর্তা/কর্মচারীর পুরো নাম।' },
-  { key: 'designation', required: true, description: 'পদবী।' },
-  { key: 'department', required: false, description: 'বিভাগ; ফাঁকা থাকলে জেনারেল/প্রশাসন হবে।' },
-  { key: 'mobile', required: false, description: 'মোবাইল নম্বর।' },
-  { key: 'email', required: false, description: 'ইমেইল ঠিকানা।' },
-  { key: 'joining_date', required: false, description: 'যোগদানের তারিখ; YYYY-MM-DD format।' },
-  { key: 'current_posting_pbs', required: false, description: 'বর্তমান পদায়ন/পবিস; ফাঁকা থাকলে নিজস্ব পবিস হবে।' }
-];
+const { employeeImportFields, employeeTemplateOptions } = require('../services/importTemplateDefinitions');
 
 // List All Employees
 router.get('/', authenticateToken, (req, res) => {
@@ -62,7 +52,7 @@ router.get('/', authenticateToken, (req, res) => {
 });
 
 router.get('/import-template', authenticateToken, requireRole(['admin', 'accounts']), (req, res) => {
-  downloadTemplate(res, 'employee_import_template.xlsx', employeeImportFields);
+  return downloadTemplate(res, employeeTemplateOptions.filename, employeeImportFields, employeeTemplateOptions);
 });
 
 router.post('/import', authenticateToken, requireRole(['admin', 'accounts']), uploadWorkbook, (req, res) => {
