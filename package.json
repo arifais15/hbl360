@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test",
-    "build:exe": "caxa --input . --output PBS_House_Loan_System.exe --exclude \"scratch\" \"tests\" \".git\" \".env*\" \"*.log\" -- \"{{caxa}}/node_modules/.bin/node\" \"{{caxa}}/server.js\""
+    "test": "node --test \"tests/*.test.js\"",
+    "build:exe": "caxa --input . --output PBS_House_Loan_System.exe --exclude \".git/**\" \"**/.env*\" \"**/.jwt_secret\" \"**/*.log\" \"**/scratch/**\" \"**/tests/**\" \"**/uploads/**\" \"cloud/**\" \"build/**\" \"dist/**\" \"coverage/**\" \"pbs_house_loan.db*\" \"database/pbs_house_loan.db*\" \"**/pbs_house_loan.db*\" \"PBS_House_Loan_System.exe\" -- \"{{caxa}}/node_modules/.bin/node\" \"{{caxa}}/portable-start.js\""
   },
   "keywords": [],
   "author": "",

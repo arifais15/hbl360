@@ -21,6 +21,8 @@ if %ERRORLEVEL% EQU 0 (
     echo.
     echo You can copy PBS_House_Loan_System.exe to any Windows computer.
     echo It runs 100%% offline without installing Node.js or any software.
+    echo On first launch, save the one-time admin password shown in the server window.
+    echo The database and private key will be created beside the EXE; back them up.
     echo ====================================================================
 ) else (
     echo.
