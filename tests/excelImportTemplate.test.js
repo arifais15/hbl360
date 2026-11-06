@@ -9,7 +9,9 @@ const {
   employeeImportFields,
   employeeTemplateOptions,
   loanImportFields,
-  loanTemplateOptions
+  loanTemplateOptions,
+  otherPbsImportFields,
+  otherPbsTemplateOptions
 } = require('../services/importTemplateDefinitions');
 
 const employeeFields = [
@@ -70,10 +72,11 @@ test('import parser locates template headers below title rows', () => {
   });
 });
 
-test('both shared import templates keep required columns and sample data separate', async () => {
+test('import templates keep required columns and sample data separate', async () => {
   for (const [fields, options] of [
     [employeeImportFields, employeeTemplateOptions],
-    [loanImportFields, loanTemplateOptions]
+    [loanImportFields, loanTemplateOptions],
+    [otherPbsImportFields, otherPbsTemplateOptions]
   ]) {
     const workbook = buildTemplateWorkbook(fields, options);
     const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
@@ -90,4 +93,39 @@ test('both shared import templates keep required columns and sample data separat
       assert.equal(workbook.worksheets[0].getCell(5, sourceTypeColumn).dataValidation.type, 'list');
     }
   }
+});
+
+test('other PBS import accepts Bengali directory headers', () => {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ['পবিসের নাম', 'সংক্ষিপ্ত নাম / কোড', 'ব্যাংকের নাম', 'হিসাব নম্বর'],
+    ['পরীক্ষামূলক পল্লী বিদ্যুৎ সমিতি', 'Test PBS', 'অগ্রণী ব্যাংক পিএলসি', '0200000000123']
+  ]);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Import');
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+  assert.deepEqual(readWorkbookRows(buffer, ['pbs_name']), [{
+    rowNumber: 2,
+    values: {
+      pbs_name: 'পরীক্ষামূলক পল্লী বিদ্যুৎ সমিতি',
+      short_name: 'Test PBS',
+      bank_name: 'অগ্রণী ব্যাংক পিএলসি',
+      account_no: '0200000000123'
+    }
+  }]);
+});
+
+test('legacy loan PBS name header still maps to origin PBS', () => {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ['loan_no', 'pbs_name'],
+    ['LOAN-001', 'উদাহরণ পল্লী বিদ্যুৎ সমিতি']
+  ]);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Import');
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+  assert.deepEqual(readWorkbookRows(buffer, ['loan_no', 'origin_pbs_name']), [{
+    rowNumber: 2,
+    values: { loan_no: 'LOAN-001', origin_pbs_name: 'উদাহরণ পল্লী বিদ্যুৎ সমিতি' }
+  }]);
 });

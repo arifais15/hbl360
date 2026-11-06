@@ -5,9 +5,11 @@ require('dotenv').config();
 
 const fs = require('fs');
 const db = require('./database/db');
+const { startDatabaseBackupScheduler } = require('./services/databaseBackupService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
 
 // Middleware
 app.use(cors());
@@ -56,11 +58,17 @@ app.use((req, res) => {
 });
 
 function startServer(portToTry) {
-  const server = app.listen(portToTry, () => {
+  const server = app.listen(portToTry, HOST, () => {
     console.log(`================================================================`);
     console.log(`পবিস কর্মকর্তা-কর্মচারী গৃহ ঋণ ব্যবস্থাপনা সিস্টেম`);
     console.log(`PBS House Loan Management System Server running on: http://localhost:${portToTry}`);
-    console.log(`Offline-ready SQLite DB: ${db.dbPath}`);
+    console.log(db.isPostgres ? 'Database: Supabase PostgreSQL' : `Offline-ready SQLite DB: ${db.dbPath}`);
+
+    if (!db.isPostgres) {
+      startDatabaseBackupScheduler(db).ready.catch((error) => {
+        console.warn('[Database Backup] Could not start automatic backups:', error.message);
+      });
+    }
 
     // Auto-sync monthly interest provisions for active loans
     try {
@@ -96,4 +104,8 @@ function startServer(portToTry) {
   });
 }
 
-startServer(Number(PORT));
+if (require.main === module) {
+  startServer(Number(PORT));
+}
+
+module.exports = app;

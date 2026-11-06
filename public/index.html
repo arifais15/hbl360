@@ -1870,8 +1870,17 @@
                 </h3>
                 <p class="text-xs text-gray-500 mt-0.5">৮০টি পল্লী বিদ্যুৎ সমিতির ব্যাংক হিসাব, শাখা ও রাউটিং নম্বর ব্যবস্থাপনা ও সম্পাদন</p>
               </div>
-              <div class="flex items-center space-x-2">
+              <div class="flex flex-wrap items-center gap-2">
                 <span id="otherPbsCountBadge" class="px-2.5 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-bold">মোট ৮০টি পবিস</span>
+                <button type="button" onclick="downloadExcelTemplate('/settings/other-pbs/import-template', 'other_pbs_directory_import_template.xlsx', this)" class="border border-emerald-700 text-emerald-800 hover:bg-emerald-50 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5">
+                  <i data-lucide="download" class="w-4 h-4"></i>
+                  <span>Excel টেমপ্লেট</span>
+                </button>
+                <button type="button" onclick="document.getElementById('otherPbsExcelImportInput').click()" class="border border-blue-700 text-blue-800 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5">
+                  <i data-lucide="upload" class="w-4 h-4"></i>
+                  <span>Excel আমদানি</span>
+                </button>
+                <input type="file" id="otherPbsExcelImportInput" accept=".xlsx" class="hidden">
                 <button onclick="openOtherPbsModal()" class="bg-purple-700 hover:bg-purple-800 text-white px-3 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1 shadow">
                   <i data-lucide="plus" class="w-4 h-4"></i>
                   <span>নতুন পবিস যুক্ত করুন</span>
@@ -1992,7 +2001,7 @@
             </div>
 
             <!-- Full Ledger Tables (Rendered per loan via JS) -->
-            <div id="empLedgerTablesContainer" class="space-y-6">
+            <div id="empLedgerTablesContainer" class="space-y-4">
               <!-- Populated by JS -->
             </div>
           </div>
