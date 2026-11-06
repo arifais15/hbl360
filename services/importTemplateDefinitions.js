@@ -66,9 +66,40 @@ const loanTemplateOptions = {
   }]
 };
 
+const otherPbsImportFields = [
+  { key: 'pbs_name', label: 'পবিসের নাম', required: true, description: 'অন্যান্য পল্লী বিদ্যুৎ সমিতির পূর্ণ নাম; প্রতিটি নাম অনন্য হতে হবে।' },
+  { key: 'short_name', label: 'সংক্ষিপ্ত নাম / কোড', required: false, description: 'যেমন Coxs Bazar PBS।' },
+  { key: 'bank_name', label: 'ব্যাংকের নাম', required: false, description: 'সমিতির ব্যাংকের নাম।' },
+  { key: 'bank_branch', label: 'ব্যাংক শাখা', required: false, description: 'ব্যাংকের শাখার নাম ও অবস্থান।' },
+  { key: 'account_no', label: 'হিসাব নম্বর', required: false, description: 'ব্যাংক হিসাব নম্বর; শুরুতে শূন্য থাকলে Text format ব্যবহার করুন।' },
+  { key: 'routing_no', label: 'রাউটিং নম্বর', required: false, description: 'ব্যাংকের রাউটিং নম্বর; শুরুতে শূন্য থাকলে Text format ব্যবহার করুন।' },
+  { key: 'contact_person', label: 'যোগাযোগ ব্যক্তির নাম', required: false, description: 'ঐচ্ছিক যোগাযোগের নাম।' },
+  { key: 'phone', label: 'ফোন নম্বর', required: false, description: 'ফোন নম্বর; শুরুতে শূন্য থাকলে Text format ব্যবহার করুন।' },
+  { key: 'email', label: 'ইমেইল', required: false, description: 'যোগাযোগের ইমেইল ঠিকানা।' }
+];
+
+const otherPbsTemplateOptions = {
+  filename: 'other_pbs_directory_import_template.xlsx',
+  title: 'অন্যান্য পবিস ডিরেক্টরি আমদানি টেমপ্লেট',
+  subtitle: 'শুধু পবিসের নাম আবশ্যক; বিদ্যমান পবিসের তথ্য পরিবর্তন হবে না।',
+  examples: [{
+    pbs_name: 'উদাহরণ পল্লী বিদ্যুৎ সমিতি',
+    short_name: 'Example PBS',
+    bank_name: 'অগ্রণী ব্যাংক পিএলসি',
+    bank_branch: 'উদাহরণ শাখা',
+    account_no: '0200000000000',
+    routing_no: '010000000',
+    contact_person: '',
+    phone: '01700000000',
+    email: ''
+  }]
+};
+
 module.exports = {
   employeeImportFields,
   employeeTemplateOptions,
   loanImportFields,
-  loanTemplateOptions
+  loanTemplateOptions,
+  otherPbsImportFields,
+  otherPbsTemplateOptions
 };

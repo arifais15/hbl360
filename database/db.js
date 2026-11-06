@@ -1,8 +1,8 @@
-const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const usePostgres = Boolean(process.env.SUPABASE_DATABASE_URL);
 
 function resolveDataDir() {
   if (process.env.PBS_DATA_DIR) {
@@ -34,34 +34,39 @@ function resolveDataDir() {
   return path.dirname(__dirname);
 }
 
-const dbDir = resolveDataDir();
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
+let db;
+if (usePostgres) {
+  const { createPostgresDatabase } = require('./postgres');
+  db = createPostgresDatabase(process.env.SUPABASE_DATABASE_URL);
+  console.log('[Database] Using Supabase PostgreSQL.');
+} else {
+  const Database = require('better-sqlite3');
+  const dbDir = resolveDataDir();
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
 
-const dbPath = path.join(dbDir, 'pbs_house_loan.db');
-
-// If target database does not exist, copy packaged template if available
-if (!fs.existsSync(dbPath)) {
-  const bundledDbPath = path.join(__dirname, 'pbs_house_loan.db');
-  if (fs.existsSync(bundledDbPath) && bundledDbPath !== dbPath) {
-    try {
-      fs.copyFileSync(bundledDbPath, dbPath);
-      console.log(`[Database] Bundled database seed copied to: ${dbPath}`);
-    } catch (err) {
-      console.warn(`[Database] Seed database copy note: ${err.message}`);
+  const dbPath = path.join(dbDir, 'pbs_house_loan.db');
+  if (!fs.existsSync(dbPath)) {
+    const bundledDbPath = path.join(__dirname, 'pbs_house_loan.db');
+    if (fs.existsSync(bundledDbPath) && bundledDbPath !== dbPath) {
+      try {
+        fs.copyFileSync(bundledDbPath, dbPath);
+        console.log(`[Database] Bundled database seed copied to: ${dbPath}`);
+      } catch (err) {
+        console.warn(`[Database] Seed database copy note: ${err.message}`);
+      }
     }
   }
+
+  db = new Database(dbPath);
+  db.dataDir = dbDir;
+  db.dbDir = dbDir;
+  db.dbPath = dbPath;
+
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
 }
-
-const db = new Database(dbPath);
-db.dataDir = dbDir;
-db.dbDir = dbDir;
-db.dbPath = dbPath;
-
-// Enable WAL mode for high concurrency and resilience
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
 
 function initSchema() {
   db.exec(`
@@ -469,6 +474,13 @@ function initSchema() {
 
 }
 
-initSchema();
+try {
+  initSchema();
+} catch (error) {
+  if (db.isPostgres) {
+    try { db.close(); } catch (_) {}
+  }
+  throw error;
+}
 
 module.exports = db;

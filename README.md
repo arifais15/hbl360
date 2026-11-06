@@ -11,6 +11,14 @@ JWT signing key প্রথম চালুর সময় অ্যাপ্�
 
 প্রথমবার চালুর আগে `.env.example` কপি করে `.env` তৈরি করুন এবং `MASTER_ADMIN_PASSWORD`-এ মাস্টার অ্যাডমিনের পাসওয়ার্ড দিন। নতুন ডাটাবেজে `admin` ব্যবহারকারী তৈরি হবে; বিদ্যমান পুরোনো `admin` থাকলে একবার মাস্টার অ্যাডমিনে উন্নীত হওয়ার সময় তার পাসওয়ার্ড এই মানে সেট হবে। পরবর্তী চালুতে পাসওয়ার্ড স্বয়ংক্রিয়ভাবে বদলাবে না। `.env` গোপন রাখুন; পোর্টেবল EXE তৈরির সময় এটি অন্তর্ভুক্ত হয় না, তাই EXE চালানোর পরিবেশে ভেরিয়েবলটি আলাদাভাবে সেট করুন। নিজস্ব পবিসের মূল তথ্য ও লেটারহেড পরিবর্তন শুধু মাস্টার অ্যাডমিন করতে পারবেন; ব্যাংক হিসাব ও ব্যাংক অ্যাডভাইসের নামের তথ্য অ্যাডমিন/হিসাব ব্যবহারকারীরা পরিবর্তন করতে পারবেন।
 
+## Supabase ও Vercel (ঐচ্ছিক cloud deployment)
+
+`SUPABASE_DATABASE_URL` সেট করা থাকলেই অ্যাপটি Supabase PostgreSQL ব্যবহার করবে; সেটি অনুপস্থিত থাকলে বর্তমান SQLite/local/offline/desktop আচরণ অপরিবর্তিত থাকে। Supabase Dashboard-এ **Project Settings → Database → Connect** থেকে PostgreSQL connection URI নিন (Vercel-এর জন্য Session pooler URI সুপারিশ করা হয়), এবং URI-তে প্রকৃত database password ব্যবহার করুন। URI কখনো source control, `.env.example`, বা log-এ রাখবেন না।
+
+Vercel-এ repository import করার পর **Project Settings → Environment Variables**-এ `SUPABASE_DATABASE_URL`, `JWT_SECRET` এবং `MASTER_ADMIN_PASSWORD` যোগ করুন। `JWT_SECRET`-এর জন্য দীর্ঘ random secret দিন; serverless পরিবেশে ফাইলভিত্তিক JWT secret ব্যবহার করা যায় না। `MASTER_ADMIN_PASSWORD` অন্তত ৮ অক্ষরের হতে হবে। Production environment নির্বাচন করে deploy করুন। `vercel.json` API function-এ অনুরোধ পাঠায় এবং Express app static frontend পরিবেশন করে।
+
+PostgreSQL-এর প্রয়োজনীয় টেবিল, foreign key, check constraint, default, unique/partial index ও প্রাথমিক settings/interest rules অ্যাপের প্রথম চালুতে তৈরি হয়। `admin`/`accounts` seed এবং master-admin provisioning-এর নিয়মও একই থাকে। **SQLite ফাইলের তথ্য স্বয়ংক্রিয়ভাবে cloud-এ কপি হয় না**: ক্লাউডে নতুন, খালি schema তৈরি হবে; production data-র জন্য deploy-র আগে PostgreSQL-এ স্পষ্ট data migration করতে হবে, IDs আমদানি করলে সংশ্লিষ্ট serial sequence-ও এগিয়ে দিতে হবে, এবং row counts/সম্পর্কগুলো যাচাই করতে হবে। SQLite backup scheduler শুধু local SQLite-এ চলে; Supabase-এর managed backup/PITR আলাদাভাবে চালু করুন। বর্তমান PostgreSQL adapter একটি connection-এ query serially চালায় এবং legacy synchronous route-গুলোকে worker thread-এ অপেক্ষা করায়; বেশি concurrent traffic-এর জন্য পূর্ণ asynchronous route/pool migration দরকার। Vercel-এর ফাইল সিস্টেমে letterhead logo upload স্থায়ী নয়—এটি স্থায়ীভাবে সংরক্ষণ করতে object storage (যেমন Supabase Storage) যোগ করতে হবে।
+
 ---
 
 ## ব্যবহারকারী ম্যানুয়াল

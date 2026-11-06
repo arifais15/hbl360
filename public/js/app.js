@@ -240,13 +240,13 @@ function showToast(message, type = 'success') {
   }, 4000);
 }
 
-async function importExcelFile(input, endpoint, label, afterImport) {
+async function importExcelFile(input, endpoint, label, afterImport, duplicateHint = 'একই পে আইডি/ঋণ নম্বর থাকলে সেই সারি বাদ যাবে।') {
   const file = input.files?.[0];
   if (!file) return;
 
   try {
     const confirmed = await confirmWithSweetAlert(
-      `${file.name} ফাইলের তথ্য আমদানি করবেন? একই পে আইডি/ঋণ নম্বর থাকলে সেই সারি বাদ যাবে।`,
+      `${file.name} ফাইলের তথ্য আমদানি করবেন? ${duplicateHint}`,
       {
         title: `${label} Excel আমদানি`,
         confirmButtonText: 'আমদানি করুন'
@@ -398,6 +398,68 @@ document.addEventListener('keydown', (e) => {
 
 // ----------------- AUTHENTICATION & INITIALIZATION -----------------
 
+const IDLE_LOGOUT_TIMEOUT_MS = 10 * 60 * 1000;
+const IDLE_ACTIVITY_STORAGE_KEY = 'pbs_last_activity_at';
+let idleLogoutTimer = null;
+let lastActivityAt = 0;
+
+function stopIdleLogoutTimer() {
+  if (idleLogoutTimer) clearTimeout(idleLogoutTimer);
+  idleLogoutTimer = null;
+  lastActivityAt = 0;
+}
+
+function latestActivityAt() {
+  const stored = Number(localStorage.getItem(IDLE_ACTIVITY_STORAGE_KEY));
+  return Math.max(lastActivityAt, Number.isFinite(stored) ? stored : 0);
+}
+
+function scheduleIdleLogout(activityAt, syncAcrossTabs = false) {
+  if (idleLogoutTimer) clearTimeout(idleLogoutTimer);
+  lastActivityAt = activityAt;
+  if (syncAcrossTabs) localStorage.setItem(IDLE_ACTIVITY_STORAGE_KEY, String(activityAt));
+  idleLogoutTimer = setTimeout(enforceIdleLogout, Math.max(0, activityAt + IDLE_LOGOUT_TIMEOUT_MS - Date.now()));
+}
+
+function enforceIdleLogout() {
+  if (!API.getToken()) {
+    stopIdleLogoutTimer();
+    return;
+  }
+
+  const activityAt = latestActivityAt();
+  const remaining = activityAt + IDLE_LOGOUT_TIMEOUT_MS - Date.now();
+  if (remaining > 0) {
+    scheduleIdleLogout(activityAt);
+    return;
+  }
+
+  API.setToken(null);
+  API.setUser(null);
+  localStorage.removeItem(IDLE_ACTIVITY_STORAGE_KEY);
+  showLoginUI();
+  showToast('১০ মিনিট নিষ্ক্রিয় থাকার কারণে আপনাকে লগআউট করা হয়েছে।', 'info');
+}
+
+function startIdleLogoutTimer() {
+  if (!API.getToken()) return stopIdleLogoutTimer();
+  const stored = Number(localStorage.getItem(IDLE_ACTIVITY_STORAGE_KEY));
+  const activityAt = Number.isFinite(stored) && stored > 0 ? stored : Date.now();
+  scheduleIdleLogout(activityAt);
+  enforceIdleLogout();
+}
+
+function recordUserActivity() {
+  if (!API.getToken()) return;
+  const now = Date.now();
+  const previous = latestActivityAt();
+  if (previous && now - previous >= IDLE_LOGOUT_TIMEOUT_MS) {
+    enforceIdleLogout();
+    return;
+  }
+  if (now - lastActivityAt >= 1000) scheduleIdleLogout(now, true);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   initSidebarState();
 
@@ -414,6 +476,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Setup form submit listeners
   setupFormListeners();
+
+  ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'wheel', 'scroll'].forEach((eventName) => {
+    document.addEventListener(eventName, recordUserActivity, { passive: true });
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) enforceIdleLogout();
+  });
 });
 
 window.addEventListener('auth-expired', () => {
@@ -421,7 +490,18 @@ window.addEventListener('auth-expired', () => {
   showToast('লগইন মেয়াদ উত্তীর্ণ হয়েছে। পুনরায় লগইন করুন।', 'error');
 });
 
+window.addEventListener('storage', (event) => {
+  if (event.key === IDLE_ACTIVITY_STORAGE_KEY && API.getToken()) {
+    const activityAt = Number(event.newValue);
+    if (Number.isFinite(activityAt) && activityAt > 0) scheduleIdleLogout(activityAt);
+  } else if (event.key === 'pbs_loan_token' && !event.newValue) {
+    stopIdleLogoutTimer();
+    showLoginUI();
+  }
+});
+
 function showLoginUI() {
+  stopIdleLogoutTimer();
   state.user = null;
   document.getElementById('loginScreen').classList.remove('hidden');
   document.getElementById('authenticatedWorkspace').classList.add('hidden');
@@ -432,6 +512,7 @@ function showLoginUI() {
 }
 
 function showAuthenticatedUI() {
+  startIdleLogoutTimer();
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('authenticatedWorkspace').classList.remove('hidden');
   document.getElementById('userHeaderSection').classList.remove('hidden');
@@ -511,6 +592,7 @@ async function handleLoginSubmit() {
       API.setToken(res.token);
       API.setUser(res.user);
       state.user = res.user;
+      scheduleIdleLogout(Date.now(), true);
       showAuthenticatedUI();
       await loadInitialData();
       showToast(`স্বাগতম, ${res.user.fullName}!`, 'success');
@@ -903,8 +985,10 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.getElementById('logoutBtn').addEventListener('click', () => {
+  stopIdleLogoutTimer();
   API.setToken(null);
   API.setUser(null);
+  localStorage.removeItem(IDLE_ACTIVITY_STORAGE_KEY);
   showLoginUI();
   showToast('লগআউট সম্পন্ন হয়েছে।', 'info');
 });
@@ -8348,7 +8432,7 @@ async function loadEmployeePortal() {
         const entries = ll.entries || [];
         const isOwn = loan.loan_source_type === 'OWN_PBS';
         const loanCard = document.createElement('div');
-        loanCard.className = 'bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden';
+        loanCard.className = 'bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden';
 
         let rowsHtml = '';
         if (entries.length === 0) {
@@ -8376,22 +8460,22 @@ async function loadEmployeePortal() {
             }
 
             return `
-              <tr class="hover:bg-blue-50/50 transition ${rowBg} text-xs">
-                <td class="p-2.5 text-center text-gray-400 font-mono">${toBn(eIdx + 1)}</td>
-                <td class="p-2.5 font-mono font-medium text-gray-800 whitespace-nowrap">${toBn(e.date)}</td>
-                <td class="p-2.5 font-sans font-medium text-gray-900">
+              <tr class="hover:bg-blue-50/50 transition ${rowBg} text-[11px] leading-4">
+                <td class="px-2 py-1 text-center text-gray-400 font-mono">${toBn(eIdx + 1)}</td>
+                <td class="px-2 py-1 font-mono font-medium text-gray-800 whitespace-nowrap">${toBn(e.date)}</td>
+                <td class="px-2 py-1 font-sans font-medium text-gray-900">
                   ${typeBadge}<span>${e.description}</span>
                 </td>
-                <td class="p-2.5 text-gray-500 font-mono text-[11px] whitespace-nowrap">${e.voucher || '—'}</td>
-                <td class="p-2.5 text-right font-mono font-bold text-blue-800 bg-blue-50/30">${e.debitPrincipal > 0 ? formatBDT(e.debitPrincipal) : '—'}</td>
-                <td class="p-2.5 text-right font-mono font-bold text-emerald-700 bg-emerald-50/30">${e.creditPrincipal > 0 ? formatBDT(e.creditPrincipal) : '—'}</td>
+                <td class="px-2 py-1 text-gray-500 font-mono text-[11px] whitespace-nowrap">${e.voucher || '—'}</td>
+                <td class="px-2 py-1 text-right font-mono font-bold text-blue-800 bg-blue-50/30 whitespace-nowrap">${e.debitPrincipal > 0 ? formatBDT(e.debitPrincipal) : '—'}</td>
+                <td class="px-2 py-1 text-right font-mono font-bold text-emerald-700 bg-emerald-50/30 whitespace-nowrap">${e.creditPrincipal > 0 ? formatBDT(e.creditPrincipal) : '—'}</td>
                 ${isOwn ? `
-                <td class="p-2.5 text-right font-mono font-bold text-orange-800 bg-orange-50/30">${e.debitInterest > 0 ? formatBDT(e.debitInterest) : '—'}</td>
-                <td class="p-2.5 text-right font-mono font-bold text-amber-700 bg-amber-50/30">${e.creditInterest > 0 ? formatBDT(e.creditInterest) : '—'}</td>
+                <td class="px-2 py-1 text-right font-mono font-bold text-orange-800 bg-orange-50/30 whitespace-nowrap">${e.debitInterest > 0 ? formatBDT(e.debitInterest) : '—'}</td>
+                <td class="px-2 py-1 text-right font-mono font-bold text-amber-700 bg-amber-50/30 whitespace-nowrap">${e.creditInterest > 0 ? formatBDT(e.creditInterest) : '—'}</td>
                 ` : ''}
-                <td class="p-2.5 text-right font-mono font-bold text-blue-900">${formatBDT(e.principalBalance)}</td>
-                ${isOwn ? `<td class="p-2.5 text-right font-mono font-bold text-amber-900">${formatBDT(e.interestBalance)}</td>` : ''}
-                <td class="p-2.5 text-right font-mono font-extrabold text-emerald-900 bg-emerald-50/40">${formatBDT(e.netBalance)}</td>
+                <td class="px-2 py-1 text-right font-mono font-bold text-blue-900 whitespace-nowrap">${formatBDT(e.principalBalance)}</td>
+                ${isOwn ? `<td class="px-2 py-1 text-right font-mono font-bold text-amber-900 whitespace-nowrap">${formatBDT(e.interestBalance)}</td>` : ''}
+                <td class="px-2 py-1 text-right font-mono font-extrabold text-emerald-900 bg-emerald-50/40 whitespace-nowrap">${formatBDT(e.netBalance)}</td>
               </tr>
             `;
           }).join('');
@@ -8399,7 +8483,7 @@ async function loadEmployeePortal() {
 
         loanCard.innerHTML = `
           <!-- Loan Section Top Bar -->
-          <div class="p-4 bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div class="px-3 py-2 bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div class="flex items-center space-x-2 flex-wrap">
               <span class="w-6 h-6 rounded-md bg-emerald-800 text-white text-xs font-bold flex items-center justify-center font-mono">#${toBn(idx + 1)}</span>
               <span class="font-extrabold font-mono text-gray-900 text-base">${loan.loan_no}</span>
@@ -8413,43 +8497,43 @@ async function loadEmployeePortal() {
           </div>
 
           <!-- Table Container -->
-          <div class="overflow-x-auto">
-            <table class="w-full text-left border-collapse">
+          <div class="employee-ledger-scroll overflow-x-auto">
+            <table class="employee-ledger-table w-full min-w-[1050px] text-left border-collapse">
               <thead>
                 <tr class="bg-gray-100/90 text-gray-700 font-bold border-b text-[11px] uppercase tracking-wider">
-                  <th class="p-2.5 text-center w-8">#</th>
-                  <th class="p-2.5 whitespace-nowrap">তারিখ</th>
-                  <th class="p-2.5 min-w-[200px]">লেনদেনের বিবরণ</th>
-                  <th class="p-2.5 whitespace-nowrap">ভাউচার</th>
-                  <th class="p-2.5 text-right bg-blue-100/60 text-blue-950 font-extrabold">ডেবিট আসল</th>
-                  <th class="p-2.5 text-right bg-emerald-100/60 text-emerald-950 font-extrabold">ক্রেডিট আসল</th>
+                  <th class="px-2 py-1.5 text-center w-8">#</th>
+                  <th class="px-2 py-1.5 whitespace-nowrap">তারিখ</th>
+                  <th class="px-2 py-1.5 min-w-[200px]">লেনদেনের বিবরণ</th>
+                  <th class="px-2 py-1.5 whitespace-nowrap">ভাউচার</th>
+                  <th class="px-2 py-1.5 text-right bg-blue-100/60 text-blue-950 font-extrabold whitespace-nowrap">ডেবিট আসল</th>
+                  <th class="px-2 py-1.5 text-right bg-emerald-100/60 text-emerald-950 font-extrabold whitespace-nowrap">ক্রেডিট আসল</th>
                   ${isOwn ? `
-                  <th class="p-2.5 text-right bg-orange-100/60 text-orange-950 font-extrabold">ডেবিট সুদ</th>
-                  <th class="p-2.5 text-right bg-amber-100/60 text-amber-950 font-extrabold">ক্রেডিট সুদ</th>
+                  <th class="px-2 py-1.5 text-right bg-orange-100/60 text-orange-950 font-extrabold whitespace-nowrap">ডেবিট সুদ</th>
+                  <th class="px-2 py-1.5 text-right bg-amber-100/60 text-amber-950 font-extrabold whitespace-nowrap">ক্রেডিট সুদ</th>
                   ` : ''}
-                  <th class="p-2.5 text-right text-blue-900 font-extrabold">আসল স্থিতি</th>
-                  ${isOwn ? `<th class="p-2.5 text-right text-amber-900 font-extrabold">সুদ স্থিতি</th>` : ''}
-                  <th class="p-2.5 text-right text-emerald-950 font-extrabold bg-emerald-100/40">মোট স্থিতি</th>
+                  <th class="px-2 py-1.5 text-right text-blue-900 font-extrabold whitespace-nowrap">আসল স্থিতি</th>
+                  ${isOwn ? `<th class="px-2 py-1.5 text-right text-amber-900 font-extrabold whitespace-nowrap">সুদ স্থিতি</th>` : ''}
+                  <th class="px-2 py-1.5 text-right text-emerald-950 font-extrabold bg-emerald-100/40 whitespace-nowrap">মোট স্থিতি</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200 bg-white">
                 ${rowsHtml}
               </tbody>
               <!-- Subtotals and Closing Balance Footer -->
-              <tfoot class="bg-gray-100 border-t-2 border-gray-300 font-mono text-xs font-bold text-gray-900">
+              <tfoot class="bg-gray-100 border-t-2 border-gray-300 font-mono text-[11px] font-bold text-gray-900">
                 <tr>
-                  <td colspan="4" class="p-3 text-right font-sans font-extrabold text-gray-800">
+                  <td colspan="4" class="px-2 py-1.5 text-right font-sans font-extrabold text-gray-800">
                     ★ হিসাব সমাপ্তি জের (Closing Balance):
                   </td>
-                  <td class="p-3 text-right text-blue-900 bg-blue-50/50">${formatBDT(sub.totalDisbursed || 0)}</td>
-                  <td class="p-3 text-right text-emerald-800 bg-emerald-50/50">${formatBDT(sub.totalPrincipalPaid || 0)}</td>
+                  <td class="px-2 py-1.5 text-right text-blue-900 bg-blue-50/50">${formatBDT(sub.totalDisbursed || 0)}</td>
+                  <td class="px-2 py-1.5 text-right text-emerald-800 bg-emerald-50/50">${formatBDT(sub.totalPrincipalPaid || 0)}</td>
                   ${isOwn ? `
-                  <td class="p-3 text-right text-orange-900 bg-orange-50/50">${formatBDT(sub.totalInterestProvisioned || 0)}</td>
-                  <td class="p-3 text-right text-amber-800 bg-amber-50/50">${formatBDT(sub.totalInterestPaid || 0)}</td>
+                  <td class="px-2 py-1.5 text-right text-orange-900 bg-orange-50/50">${formatBDT(sub.totalInterestProvisioned || 0)}</td>
+                  <td class="px-2 py-1.5 text-right text-amber-800 bg-amber-50/50">${formatBDT(sub.totalInterestPaid || 0)}</td>
                   ` : ''}
-                  <td class="p-3 text-right text-blue-900 font-extrabold">${formatBDT(sub.principalBalance || 0)}</td>
-                  ${isOwn ? `<td class="p-3 text-right text-amber-900 font-extrabold">${formatBDT(sub.interestBalance || 0)}</td>` : ''}
-                  <td class="p-3 text-right text-emerald-950 font-extrabold bg-emerald-100/60">${formatBDT(sub.netBalance || 0)}</td>
+                  <td class="px-2 py-1.5 text-right text-blue-900 font-extrabold">${formatBDT(sub.principalBalance || 0)}</td>
+                  ${isOwn ? `<td class="px-2 py-1.5 text-right text-amber-900 font-extrabold">${formatBDT(sub.interestBalance || 0)}</td>` : ''}
+                  <td class="px-2 py-1.5 text-right text-emerald-950 font-extrabold bg-emerald-100/60">${formatBDT(sub.netBalance || 0)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -8750,6 +8834,9 @@ function setupFormListeners() {
       await Promise.all([loadLoans(), loadEmployees()]);
       if (typeof loadDashboard === 'function') await loadDashboard();
     });
+  });
+  document.getElementById('otherPbsExcelImportInput')?.addEventListener('change', (event) => {
+    importExcelFile(event.currentTarget, '/settings/other-pbs/import', 'অন্যান্য পবিস', loadSettings, 'বিদ্যমান পবিসের নাম থাকলে সেই সারি বাদ যাবে।');
   });
 
   // Login

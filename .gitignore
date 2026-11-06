@@ -9,6 +9,7 @@ coverage/
 .jwt_secret
 /pbs_house_loan.db*
 /database/pbs_house_loan.db*
+/backups/
 /uploads/
 /scratch/
 /scripts/seed_other_pbs.js

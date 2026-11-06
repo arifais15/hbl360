@@ -17,6 +17,10 @@ function getJwtSecret() {
     return process.env.JWT_SECRET;
   }
 
+  if (db.isPostgres) {
+    throw new Error('JWT_SECRET must be set when using Supabase PostgreSQL so tokens remain valid across serverless instances.');
+  }
+
   const secretPath = path.join(db.dataDir, '.jwt_secret');
   try {
     return readJwtSecret(secretPath);

@@ -61,6 +61,40 @@ html, body {
   min-width: 0;
 }
 
+.employee-ledger-scroll {
+  max-height: min(62vh, 640px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.employee-ledger-table {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.employee-ledger-table th,
+.employee-ledger-table td {
+  padding: 0.3rem 0.45rem;
+  line-height: 1.25;
+  border-right: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.employee-ledger-table th:last-child,
+.employee-ledger-table td:last-child {
+  border-right: 0;
+}
+
+.employee-ledger-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.employee-ledger-table tbody tr:hover {
+  background-color: #eff6ff;
+}
+
 /* Remove numeric input spinners (up/down arrows) across all browsers */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {

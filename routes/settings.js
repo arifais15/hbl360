@@ -7,6 +7,8 @@ const { randomUUID } = require('crypto');
 const db = require('../database/db');
 const { authenticateToken, requireRole, requireMasterAdmin } = require('../middleware/auth');
 const { logAudit } = require('../middleware/audit');
+const { cellText, downloadTemplate, readWorkbookRows, uploadWorkbook } = require('../services/excelImportService');
+const { otherPbsImportFields, otherPbsTemplateOptions } = require('../services/importTemplateDefinitions');
 
 const logoUpload = multer({
   storage: multer.memoryStorage(),
@@ -47,12 +49,107 @@ router.get('/', authenticateToken, (req, res) => {
       pbsSettings,
       otherPbsList,
       interestRules,
-      dbPath: db.dbPath || path.resolve('database/pbs_house_loan.db'),
-      dataDir: db.dataDir || path.resolve('.')
+      dbPath: db.isPostgres ? 'Supabase PostgreSQL' : db.dbPath || path.resolve('database/pbs_house_loan.db'),
+      dataDir: db.isPostgres ? 'Cloud-hosted' : db.dataDir || path.resolve('.')
     });
   } catch (error) {
     console.error('Settings error:', error);
     res.status(500).json({ success: false, message: 'সেটিংস লোড করা যায়নি।' });
+  }
+});
+
+router.get('/other-pbs/import-template', authenticateToken, requireRole(['admin', 'accounts']), (req, res) => {
+  return downloadTemplate(res, otherPbsTemplateOptions.filename, otherPbsImportFields, otherPbsTemplateOptions);
+});
+
+router.post('/other-pbs/import', authenticateToken, requireRole(['admin', 'accounts']), uploadWorkbook, (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'একটি .xlsx ফাইল নির্বাচন করুন।' });
+    }
+
+    const rows = readWorkbookRows(req.file.buffer, ['pbs_name']);
+    if (!rows.length) {
+      return res.status(400).json({ success: false, message: 'Excel ফাইলে আমদানির জন্য কোনো পবিসের তথ্য নেই।' });
+    }
+    if (rows.length > 1000) {
+      return res.status(400).json({ success: false, message: 'একবারে সর্বোচ্চ ১০০০টি পবিস আমদানি করা যাবে।' });
+    }
+
+    const errors = [];
+    const skipped = [];
+    const seenNames = new Set();
+    const accepted = [];
+    const findPbs = db.prepare('SELECT id FROM other_pbs WHERE lower(pbs_name) = lower(?)');
+
+    for (const row of rows) {
+      const values = row.values;
+      const pbsName = cellText(values.pbs_name);
+      if (!pbsName) {
+        errors.push({ row: row.rowNumber, message: 'পবিসের নাম আবশ্যক।' });
+        continue;
+      }
+
+      const normalizedName = pbsName.toLocaleLowerCase();
+      if (seenNames.has(normalizedName) || findPbs.get(pbsName)) {
+        skipped.push({ row: row.rowNumber, key: pbsName, reason: 'পবিসের নাম ডিরেক্টরিতে আগে থেকেই আছে।' });
+        continue;
+      }
+
+      seenNames.add(normalizedName);
+      accepted.push({
+        pbs_name: pbsName,
+        short_name: cellText(values.short_name),
+        bank_name: normalizeBankName(cellText(values.bank_name)),
+        bank_branch: cellText(values.bank_branch),
+        account_no: cellText(values.account_no),
+        routing_no: cellText(values.routing_no),
+        contact_person: cellText(values.contact_person),
+        phone: cellText(values.phone),
+        email: cellText(values.email)
+      });
+    }
+
+    if (errors.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Excel ফাইলে ভুল আছে; কোনো পবিস আমদানি করা হয়নি।',
+        errors,
+        skipped
+      });
+    }
+
+    const insertPbs = db.prepare(`
+      INSERT INTO other_pbs (pbs_name, short_name, bank_name, bank_branch, account_no, routing_no, contact_person, phone, email)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const importPbs = db.transaction(() => {
+      for (const pbs of accepted) {
+        const result = insertPbs.run(
+          pbs.pbs_name,
+          pbs.short_name,
+          pbs.bank_name,
+          pbs.bank_branch,
+          pbs.account_no,
+          pbs.routing_no,
+          pbs.contact_person,
+          pbs.phone,
+          pbs.email
+        );
+        logAudit(req, 'CREATE', 'OTHER_PBS', result.lastInsertRowid, `Excel থেকে পবিস আমদানি: ${pbs.pbs_name}`);
+      }
+    });
+    importPbs();
+
+    res.json({
+      success: true,
+      message: `${accepted.length}টি পবিস আমদানি হয়েছে।`,
+      imported: accepted.length,
+      skipped
+    });
+  } catch (error) {
+    console.error('Other PBS Excel import error:', error);
+    res.status(error.statusCode || 500).json({ success: false, message: error.message || 'পবিস Excel আমদানি ব্যর্থ হয়েছে।' });
   }
 });
 
@@ -338,4 +435,3 @@ router.delete('/interest-rules/:id', authenticateToken, requireRole(['admin', 'a
 });
 
 module.exports = router;
-

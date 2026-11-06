@@ -39,6 +39,16 @@ const HEADER_ALIASES = {
   'joining_date': ['joining_date', 'যোগদানের তারিখ', 'joining date', 'joining_dt'],
   'current_posting_pbs': ['current_posting_pbs', 'বর্তমান পদায়ন পবিস', 'বর্তমান পদায়ন', 'পদায়ন', 'posting', 'current posting', 'current_posting'],
 
+  // Other PBS directory headers
+  'pbs_name': ['pbs name', 'পবিসের নাম', 'সমিতির নাম', 'পল্লী বিদ্যুৎ সমিতির নাম'],
+  'short_name': ['short_name', 'short name', 'সংক্ষিপ্ত নাম', 'সংক্ষিপ্ত নাম / কোড', 'কোড'],
+  'bank_name': ['bank_name', 'bank name', 'ব্যাংকের নাম'],
+  'bank_branch': ['bank_branch', 'bank branch', 'ব্যাংক শাখা', 'শাখার নাম'],
+  'account_no': ['account_no', 'account no', 'account number', 'হিসাব নম্বর', 'হিসাব নং'],
+  'routing_no': ['routing_no', 'routing no', 'routing number', 'রাউটিং নম্বর', 'রাউটিং নং'],
+  'contact_person': ['contact_person', 'contact person', 'যোগাযোগ ব্যক্তির নাম'],
+  'phone': ['phone', 'ফোন', 'ফোন নম্বর', 'মোবাইল নম্বর'],
+
   // Loan headers
   'loan_no': ['loan_no', 'ঋণ নং', 'ঋণ নম্বর', 'loan no', 'loan number'],
   'loan_lot_name': ['loan_lot_name', 'ঋণ লট', 'লট', 'বরাদ্দ লট', 'lot', 'loan lot'],
@@ -62,6 +72,10 @@ function mapHeaderRow(values, requiredHeaders) {
   const rawHeaders = values.map(value => String(value).trim().toLowerCase());
   const columnKeyMap = {};
   rawHeaders.forEach((rawHeader, colIdx) => {
+    if (rawHeader === 'pbs_name' && requiredHeaders.includes('pbs_name')) {
+      columnKeyMap[colIdx] = 'pbs_name';
+      return;
+    }
     for (const [canonicalKey, aliases] of Object.entries(HEADER_ALIASES)) {
       if (aliases.some(alias => alias.toLowerCase() === rawHeader)) {
         columnKeyMap[colIdx] = canonicalKey;
@@ -231,7 +245,7 @@ function buildTemplateWorkbook(fields, { title, subtitle, examples = [] }) {
   importSheet.columns = fields.map(field => ({
     key: field.key,
     width: Math.min(34, Math.max(18, field.key.length + 4)),
-    style: ['emp_code', 'employee_code', 'mobile', 'loan_no', 'sanction_no'].includes(field.key)
+    style: ['emp_code', 'employee_code', 'mobile', 'loan_no', 'sanction_no', 'account_no', 'routing_no', 'phone'].includes(field.key)
       ? { numFmt: '@' }
       : undefined
   }));
