@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test",
+    "test": "node --test \"tests/*.test.js\"",
     "build:exe": "caxa --input . --output PBS_House_Loan_System.exe --exclude \"scratch\" \"tests\" \".git\" \".env*\" \"*.log\" -- \"{{caxa}}/node_modules/.bin/node\" \"{{caxa}}/server.js\""
   },
   "keywords": [],

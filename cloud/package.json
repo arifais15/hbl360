@@ -1,0 +1,20 @@
+{
+  "name": "hbl360-cloud",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloud edition of PBS House Loan Management System",
+  "scripts": {
+    "start": "node api/local.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "firebase-admin": "^14.5.0",
+    "jsonwebtoken": "^9.0.3"
+  }
+}
